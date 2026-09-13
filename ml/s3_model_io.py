@@ -38,7 +38,10 @@ def _get_bucket_name() -> str:
     return bucket
 
 
-def save_pipeline(pipeline, model_type: ModelType, metadata: dict | None = None) -> str:
+def save_pipeline(pipeline, 
+                  model_name: str | None = None,
+                  model_type: ModelType | None = None, 
+                  metadata: dict | None = None) -> str:
     """
     Serialize pipeline with joblib and upload to S3.
     Writes to two locations:
@@ -49,8 +52,13 @@ def save_pipeline(pipeline, model_type: ModelType, metadata: dict | None = None)
     bucket = _get_bucket_name()
     s3 = _get_s3_client()
 
+    if model_name is None:
+        if model_type is None:
+            raise ValueError("Either model_name or model_type must be provided.")
+
+        model_name = f"{model_type.value}_forecast"
+
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    model_name = f"{model_type.value}_forecast"
     archive_prefix = f"models/{model_name}/archive/{timestamp}"
     latest_prefix = f"models/{model_name}/latest"
 
@@ -92,7 +100,11 @@ def save_pipeline(pipeline, model_type: ModelType, metadata: dict | None = None)
     return f"s3://{bucket}/{archive_model_key}"
 
 
-def load_pipeline(model_type: ModelType, version: str = "latest") -> tuple:
+def load_pipeline(
+        model_name: str | None = None,
+        model_type: ModelType | None = None,           
+        version: str = "latest"
+        ) -> tuple:
     """
     Download and deserialize a pipeline from S3.
     version: "latest" or an archive timestamp like "20260702-143012".
@@ -106,7 +118,11 @@ def load_pipeline(model_type: ModelType, version: str = "latest") -> tuple:
     bucket = _get_bucket_name()
     s3 = _get_s3_client()
 
-    model_name = f"{model_type.value}_forecast"
+    if model_name is None:
+        if model_type is None:
+            raise ValueError("Either model_name or model_type must be provided.")
+        model_name = f"{model_type.value}_forecast"
+
     prefix = (
         f"models/{model_name}/latest"
         if version == "latest"
@@ -128,8 +144,9 @@ def load_pipeline(model_type: ModelType, version: str = "latest") -> tuple:
 
 
 def save_best_hyperparameters(
-    model_name: str,
     params: dict,
+    model_name: str | None = None,
+    model_type: ModelType | None = None,
     metadata: dict | None = None,
     wandb_run_id: str | None = None,
 ) -> str:
@@ -143,8 +160,12 @@ def save_best_hyperparameters(
     bucket = _get_bucket_name()
     s3 = _get_s3_client()
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    if model_name is None:
+        if model_type is None:
+            raise ValueError("Either model_name or model_type must be provided.")
+        model_name = f"{model_type.value}_forecast"
 
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     archive_prefix = f"models/{model_name}/hyperparameters/archive/{timestamp}"
     latest_prefix = f"models/{model_name}/hyperparameters/latest"
 
@@ -173,7 +194,10 @@ def save_best_hyperparameters(
     return f"s3://{bucket}/{archive_key}"
 
 
-def load_best_hyperparameters(model_name: str, version: str = "latest") -> dict:
+def load_best_hyperparameters(
+        model_name: str | None = None, 
+        model_type: ModelType | None = None,
+        version: str = "latest") -> dict:
     """
     Download tuned hyperparameters from S3.
     version: "latest" or an archive timestamp like "20260702-143012".
@@ -186,6 +210,11 @@ def load_best_hyperparameters(model_name: str, version: str = "latest") -> dict:
 
     bucket = _get_bucket_name()
     s3 = _get_s3_client()
+
+    if model_name is None:
+        if model_type is None:
+            raise ValueError("Either model_name or model_type must be provided.")
+        model_name = f"{model_type.value}_forecast"
 
     prefix = (
         f"models/{model_name}/hyperparameters/latest"
@@ -201,3 +230,27 @@ def load_best_hyperparameters(model_name: str, version: str = "latest") -> dict:
         f"Loaded best hyperparameters for {model_name} from s3://{bucket}/{params_key}"
     )
     return payload
+
+
+def save_data_manifest(manifest: dict) -> str:
+    """Save a training dataset manifest under its immutable data_version_id."""
+    bucket = _get_bucket_name()
+    s3 = _get_s3_client()
+    data_version_id = manifest["data_version_id"]
+    manifest_key = f"data/manifests/{data_version_id}.json"
+    latest_key = "data/manifests/latest.json"
+    body = json.dumps(manifest, indent=2).encode("utf-8")
+
+    try:
+        s3.head_object(Bucket=bucket, Key=manifest_key)
+        logger.info("Data manifest already exists at s3://%s/%s", bucket, manifest_key)
+    except Exception:
+        s3.put_object(Bucket=bucket, Key=manifest_key, Body=body)
+    s3.copy_object(
+        Bucket=bucket,
+        Key=latest_key,
+        CopySource={"Bucket": bucket, "Key": manifest_key},
+    )
+    uri = f"s3://{bucket}/{manifest_key}"
+    logger.info("Saved data manifest to %s", uri)
+    return uri

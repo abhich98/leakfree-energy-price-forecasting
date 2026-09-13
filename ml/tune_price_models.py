@@ -17,7 +17,8 @@ from ml.features.feature_engineering import (
     split_x_y,
     temporal_split,
 )
-from ml.s3_model_io import save_best_hyperparameters, save_pipeline
+from ml.data_versioning import build_data_manifest, save_local_manifest
+from ml.s3_model_io import save_best_hyperparameters, save_data_manifest, save_pipeline
 from ml.training_utils import (
     ModelType,
     build_model_report,
@@ -109,6 +110,22 @@ def tune_two_stage_price_models(
         fill_short_feature_gaps(qh_raw, omit_columns=["price_eur_mwh"])
     )
 
+    # Save the training data manifest locally and to S3
+    data_manifest = build_data_manifest(
+        {"hourly": hourly_df, "quarter_hourly": qh_df},
+        metadata={
+            "workflow": report["run"]["name"],
+            "data": report["data"],
+        },
+    )
+    data_manifest_local_path = save_local_manifest(data_manifest)
+    data_manifest_s3_uri = save_data_manifest(data_manifest)
+
+    report["data"]["data_version_id"] = data_manifest["data_version_id"]
+    report["data"]["manifest_local_path"] = data_manifest_local_path
+    report["data"]["manifest_s3_uri"] = data_manifest_s3_uri
+
+    # Split the data into training/validation and holdout sets for both hourly and quarter-hourly models
     X_hourly, y_hourly = split_x_y(hourly_df, model_type=stage1_hourly_model_type)
     X_hourly_trainval, X_hourly_holdout, y_hourly_trainval, y_hourly_holdout = (
         temporal_split(
@@ -159,6 +176,7 @@ def tune_two_stage_price_models(
             "cv_mae": float(price_hourly_study.best_value),
             "n_trials": n_trials,
             "cv_splits": hourly_cv_splits,
+            "data_version_id": data_manifest["data_version_id"],
         },
         wandb_run_id=wandb_run_id,
     )
@@ -200,6 +218,7 @@ def tune_two_stage_price_models(
             "cv_mae": float(price_qh_study.best_value),
             "n_trials": n_trials,
             "cv_splits": qh_cv_splits,
+            "data_version_id": data_manifest["data_version_id"],
         },
         wandb_run_id=wandb_run_id,
     )
@@ -281,15 +300,7 @@ def tune_two_stage_price_models(
         key_word="price_quarter_hourly_tuned",
     )
 
-    hourly_model_s3_uri = save_pipeline(
-        final_hourly_pipeline, model_type=stage1_hourly_model_type, metadata=report
-    )
-    qh_model_s3_uri = save_pipeline(
-        final_qh_pipeline,
-        model_type=stage2_qh_model_type,
-        metadata=report,
-    )
-
+    # Build report for both hourly and quarter-hourly models
     report["models"][stage1_hourly_model_type.value] = build_model_report(
         n_train=len(X_hourly_trainval),
         n_holdout=len(X_hourly_holdout),
@@ -298,10 +309,7 @@ def tune_two_stage_price_models(
         baseline_metrics=hourly_baseline_report,
         n_features=final_hourly_pipeline.named_steps["model"].n_features_in_,
         cv_mae=float(price_hourly_study.best_value),
-        artifacts={
-            "hyperparameters": hourly_params_s3_uri,
-            "pipeline": hourly_model_s3_uri,
-        },
+        artifacts={"hyperparameters": hourly_params_s3_uri},
     )
     report["models"][stage2_qh_model_type.value] = build_model_report(
         n_train=len(X_qh_train),
@@ -311,9 +319,22 @@ def tune_two_stage_price_models(
         baseline_metrics=qh_baseline_report,
         n_features=final_qh_pipeline.named_steps["model"].n_features_in_,
         cv_mae=float(price_qh_study.best_value),
-        artifacts={"hyperparameters": qh_params_s3_uri, "pipeline": qh_model_s3_uri},
+        artifacts={"hyperparameters": qh_params_s3_uri},
     )
 
+    # Save the trained pipelines to S3 and update the report with their URIs
+    hourly_model_s3_uri = save_pipeline(
+        final_hourly_pipeline, model_name=f"stage1_{stage1_hourly_model_type.value}_forecast", metadata=report
+    )
+    qh_model_s3_uri = save_pipeline(
+        final_qh_pipeline,
+        model_name=f"stage2_{stage2_qh_model_type.value}_forecast",
+        metadata=report,
+    )
+    report["models"][stage1_hourly_model_type.value]["artifacts"]["pipeline"] = hourly_model_s3_uri
+    report["models"][stage2_qh_model_type.value]["artifacts"]["pipeline"] = qh_model_s3_uri
+
+    # Save the final report to S3
     save_report(report, "price_forecast_hyperparameter_tuning_report")
 
     logger.info("Saved tuned hourly (stage 1) model to %s", hourly_model_s3_uri)
@@ -368,5 +389,5 @@ if __name__ == "__main__":
         n_trials=args.trials,
         hourly_cv_splits=args.cv_splits_hourly,
         qh_cv_splits=args.cv_splits_quarter_hourly,
-        wandb_track=not args.no_wandb,
+        wandb_track=False,  # not args.no_wandb,
     )

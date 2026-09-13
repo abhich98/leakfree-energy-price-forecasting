@@ -11,6 +11,7 @@ from ml.data_access import (
     load_hourly_price_model_features,
     load_quarter_hourly_price_model_features,
 )
+from ml.data_versioning import build_data_manifest, save_local_manifest
 from ml.features.feature_engineering import (
     TARGET_COLUMNS,
     BASELINE_PRED_COLUMNS,
@@ -19,7 +20,7 @@ from ml.features.feature_engineering import (
     drop_incomplete_days,
     split_x_y,
 )
-from ml.s3_model_io import load_best_hyperparameters, save_pipeline
+from ml.s3_model_io import load_best_hyperparameters, save_data_manifest, save_pipeline
 from ml.training_utils import (
     ModelType,
     build_model_report,
@@ -57,7 +58,7 @@ def _load_tuned_hyperparameters(
 ) -> tuple[dict | None, dict]:
     """Load tuned hyperparameters, falling back to defaults if unavailable."""
     try:
-        payload = load_best_hyperparameters(model_name, version=version)
+        payload = load_best_hyperparameters(model_name=model_name, version=version)
         return payload["params"], payload
     except Exception:
         logger.warning(
@@ -214,6 +215,21 @@ def run_two_stage_price_model_training_prediction(
             quarter_hourly_raw, omit_columns=["price_eur_mwh"], verbose=True
         )
     )
+
+    # Save the training data manifest locally and to S3
+    data_manifest = build_data_manifest(
+        {"hourly": hourly_df, "quarter_hourly": qh_df},
+        metadata={
+            "workflow": report["run"]["name"],
+            "data": report["data"],
+        },
+    )
+    data_manifest_local_path = save_local_manifest(data_manifest)
+    data_manifest_s3_uri = save_data_manifest(data_manifest)
+
+    report["data"]["data_version_id"] = data_manifest["data_version_id"]
+    report["data"]["manifest_local_path"] = data_manifest_local_path
+    report["data"]["manifest_s3_uri"] = data_manifest_s3_uri
 
     # Prediction windows for backtesting and prediction
     holdout_start = pd.Timestamp(HOLDOUT_START_DATE)
@@ -421,10 +437,14 @@ def run_two_stage_price_model_training_prediction(
     save_report(report, "price_forecast_training_prediction_report")
 
     stage1_hourly_model_s3_uri = save_pipeline(
-        final_stage1_hourly_pipeline, model_type=stage1_hourly_model_type
+        final_stage1_hourly_pipeline,
+        model_name=f"stage1_{stage1_hourly_model_type.value}_forecast",
+        metadata=report,
     )
     stage2_qh_model_s3_uri = save_pipeline(
-        final_stage2_qh_pipeline, model_type=stage2_qh_model_type, metadata=report
+        final_stage2_qh_pipeline,
+        model_name=f"stage2_{stage2_qh_model_type.value}_forecast",
+        metadata=report,
     )
     logger.info("Saved weekly Stage 1 pipeline to %s", stage1_hourly_model_s3_uri)
     logger.info("Saved weekly Stage 2 pipeline to %s", stage2_qh_model_s3_uri)
