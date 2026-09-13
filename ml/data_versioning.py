@@ -35,7 +35,9 @@ def _dataframe_fingerprint(dataframe: pd.DataFrame) -> tuple[str, dict[str, Any]
         "rows": int(len(ordered)),
         "columns": [str(column) for column in ordered.columns],
         "dtypes": {str(column): str(dtype) for column, dtype in ordered.dtypes.items()},
-        "null_counts": {str(column): int(count) for column, count in ordered.isna().sum().items()},
+        "null_counts": {
+            str(column): int(count) for column, count in ordered.isna().sum().items()
+        },
         "content_sha256": content_hash,
     }
     if len(index):
@@ -77,11 +79,15 @@ def build_data_manifest(
     }
 
 
-def save_local_manifest(manifest: dict[str, Any], directory: str = "ml/artifacts") -> str:
+def save_local_manifest(
+    manifest: dict[str, Any], directory: str = "ml/artifacts"
+) -> str:
     """Save both an immutable local manifest and a convenience latest copy."""
     output_dir = Path(directory)
     output_dir.mkdir(parents=True, exist_ok=True)
-    versioned_path = output_dir / f"data_version_manifest_{manifest['data_version_id']}.json"
+    versioned_path = (
+        output_dir / f"data_version_manifest_{manifest['data_version_id']}.json"
+    )
     latest_path = output_dir / "data_version_manifest.json"
     payload = json.dumps(manifest, indent=2, default=_json_default)
     if not versioned_path.exists():

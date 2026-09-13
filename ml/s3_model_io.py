@@ -38,10 +38,12 @@ def _get_bucket_name() -> str:
     return bucket
 
 
-def save_pipeline(pipeline, 
-                  model_name: str | None = None,
-                  model_type: ModelType | None = None, 
-                  metadata: dict | None = None) -> str:
+def save_pipeline(
+    pipeline,
+    model_name: str | None = None,
+    model_type: ModelType | None = None,
+    metadata: dict | None = None,
+) -> str:
     """
     Serialize pipeline with joblib and upload to S3.
     Writes to two locations:
@@ -101,10 +103,10 @@ def save_pipeline(pipeline,
 
 
 def load_pipeline(
-        model_name: str | None = None,
-        model_type: ModelType | None = None,           
-        version: str = "latest"
-        ) -> tuple:
+    model_name: str | None = None,
+    model_type: ModelType | None = None,
+    version: str = "latest",
+) -> tuple:
     """
     Download and deserialize a pipeline from S3.
     version: "latest" or an archive timestamp like "20260702-143012".
@@ -195,9 +197,10 @@ def save_best_hyperparameters(
 
 
 def load_best_hyperparameters(
-        model_name: str | None = None, 
-        model_type: ModelType | None = None,
-        version: str = "latest") -> dict:
+    model_name: str | None = None,
+    model_type: ModelType | None = None,
+    version: str = "latest",
+) -> dict:
     """
     Download tuned hyperparameters from S3.
     version: "latest" or an archive timestamp like "20260702-143012".

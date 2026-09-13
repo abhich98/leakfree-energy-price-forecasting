@@ -324,15 +324,21 @@ def tune_two_stage_price_models(
 
     # Save the trained pipelines to S3 and update the report with their URIs
     hourly_model_s3_uri = save_pipeline(
-        final_hourly_pipeline, model_name=f"stage1_{stage1_hourly_model_type.value}_forecast", metadata=report
+        final_hourly_pipeline,
+        model_name=f"stage1_{stage1_hourly_model_type.value}_forecast",
+        metadata=report,
     )
     qh_model_s3_uri = save_pipeline(
         final_qh_pipeline,
         model_name=f"stage2_{stage2_qh_model_type.value}_forecast",
         metadata=report,
     )
-    report["models"][stage1_hourly_model_type.value]["artifacts"]["pipeline"] = hourly_model_s3_uri
-    report["models"][stage2_qh_model_type.value]["artifacts"]["pipeline"] = qh_model_s3_uri
+    report["models"][stage1_hourly_model_type.value]["artifacts"][
+        "pipeline"
+    ] = hourly_model_s3_uri
+    report["models"][stage2_qh_model_type.value]["artifacts"][
+        "pipeline"
+    ] = qh_model_s3_uri
 
     # Save the final report to S3
     save_report(report, "price_forecast_hyperparameter_tuning_report")
@@ -389,5 +395,5 @@ if __name__ == "__main__":
         n_trials=args.trials,
         hourly_cv_splits=args.cv_splits_hourly,
         qh_cv_splits=args.cv_splits_quarter_hourly,
-        wandb_track=False,  # not args.no_wandb,
+        wandb_track=not args.no_wandb,
     )

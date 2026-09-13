@@ -158,7 +158,8 @@ def run_two_stage_price_model_training_prediction(
     train_start_time = datetime.now(timezone.utc)
 
     stage1_hourly_params, _ = _load_tuned_hyperparameters(
-        f"stage1_{stage1_hourly_model_type.value}_forecast", STAGE1_HOURLY_PARAMS_VERSION
+        f"stage1_{stage1_hourly_model_type.value}_forecast",
+        STAGE1_HOURLY_PARAMS_VERSION,
     )
     stage2_qh_params, _ = _load_tuned_hyperparameters(
         f"stage2_{stage2_qh_model_type.value}_forecast", STAGE2_QH_PARAMS_VERSION
@@ -311,7 +312,9 @@ def run_two_stage_price_model_training_prediction(
             qh_train,
             model_type=stage2_qh_model_type,
         )
-        price_deviation_train = price_qh_train - X_qh_train.pop("stage1_hourly_prediction")
+        price_deviation_train = price_qh_train - X_qh_train.pop(
+            "stage1_hourly_prediction"
+        )
 
         X_qh_window, price_qh_actual = split_x_y(
             qh_window,
