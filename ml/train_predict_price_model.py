@@ -11,7 +11,10 @@ from ml.data_access import (
     load_hourly_price_model_features,
     load_quarter_hourly_price_model_features,
 )
-from ml.data_versioning import build_data_manifest, save_local_manifest
+from ml.data_versioning import (
+    build_data_manifest,
+    save_local_manifest,
+)
 from ml.features.feature_engineering import (
     TARGET_COLUMNS,
     BASELINE_PRED_COLUMNS,
@@ -220,10 +223,7 @@ def run_two_stage_price_model_training_prediction(
     # Save the training data manifest locally and to S3
     data_manifest = build_data_manifest(
         {"hourly": hourly_df, "quarter_hourly": qh_df},
-        metadata={
-            "workflow": report["run"]["name"],
-            "data": report["data"],
-        },
+        report=report,
     )
     data_manifest_local_path = save_local_manifest(data_manifest)
     data_manifest_s3_uri = save_data_manifest(data_manifest)

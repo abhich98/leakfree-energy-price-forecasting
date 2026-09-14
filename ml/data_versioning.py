@@ -3,9 +3,10 @@ import json
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
+from ingestion.raw_data_inventory import load_latest_raw_data_inventory
 
 
 def _git_revision() -> str | None:
@@ -27,7 +28,9 @@ def _json_default(value: Any) -> str:
 
 def _dataframe_fingerprint(dataframe: pd.DataFrame) -> tuple[str, dict[str, Any]]:
     ordered = dataframe.sort_index().copy()
-    row_hashes = pd.util.hash_pandas_object(ordered, index=True).values.tobytes()
+    row_hashes = cast(
+        Any, pd.util.hash_pandas_object(ordered, index=True).values
+    ).tobytes()
     content_hash = hashlib.sha256(row_hashes).hexdigest()
 
     index = ordered.index
@@ -49,17 +52,36 @@ def _dataframe_fingerprint(dataframe: pd.DataFrame) -> tuple[str, dict[str, Any]
 
 def build_data_manifest(
     datasets: dict[str, pd.DataFrame],
-    metadata: dict[str, Any] | None = None,
+    report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a deterministic manifest for the exact prepared training datasets."""
+
+    # Determine dataset summaries, metadata, and raw inventory reference
     dataset_summaries: dict[str, dict[str, Any]] = {}
     for name, dataframe in datasets.items():
         _, summary = _dataframe_fingerprint(dataframe)
         dataset_summaries[name] = summary
 
+    if report:
+        metadata = {
+            "workflow": report["run"]["name"],
+            "data": report["data"],
+        }
+    else:
+        metadata = {}
+
+    raw_inventory = load_latest_raw_data_inventory()
+    raw_inventory_reference = {
+        "inventory_id": raw_inventory["inventory_id"],
+        "s3_uri": raw_inventory["s3_uri"],
+        "object_count": len(raw_inventory["objects"]),
+    }
+
+    # Construct a canonical identity for the datasets, metadata, and raw inventory
     identity = {
         "datasets": dataset_summaries,
-        "metadata": metadata or {},
+        "metadata": metadata,
+        "raw_inventory": raw_inventory_reference,
     }
     canonical_identity = json.dumps(
         identity,
@@ -74,8 +96,9 @@ def build_data_manifest(
         "data_version_id": data_version_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "git_revision": _git_revision(),
-        "metadata": metadata or {},
+        "metadata": metadata,
         "datasets": dataset_summaries,
+        "raw_inventory": raw_inventory_reference,
     }
 
 

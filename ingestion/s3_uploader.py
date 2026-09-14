@@ -1,6 +1,7 @@
 from io import BytesIO
 import logging
 import os
+from datetime import datetime, timezone
 from enum import Enum
 
 import boto3
@@ -105,7 +106,7 @@ def get_file_name(
 
 def upload_to_s3(
     dataframe: pd.DataFrame, data_name: DATA_NAMES, resolution: str | None = None
-):
+) -> dict:
     """Uploads a pandas DataFrame to an S3 bucket as a Parquet file.
     The file name is generated based on the timestamp of the first row in the DataFrame.
 
@@ -153,8 +154,14 @@ def upload_to_s3(
         logger.info(
             f"File uploaded successfully to {file_name} (VersionId: {version_id})"
         )
-
-        # return version_id
+        return {
+            "key": file_name,
+            "data_name": data_name.value,
+            "date": datetime(year, month, day, tzinfo=timezone.utc).date().isoformat(),
+            "resolution": resolution,
+            "version_id": version_id,
+            "etag": response.get("ETag"),
+        }
 
     except NoCredentialsError:
         logger.error(

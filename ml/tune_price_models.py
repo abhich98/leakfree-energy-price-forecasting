@@ -17,7 +17,10 @@ from ml.features.feature_engineering import (
     split_x_y,
     temporal_split,
 )
-from ml.data_versioning import build_data_manifest, save_local_manifest
+from ml.data_versioning import (
+    build_data_manifest,
+    save_local_manifest,
+)
 from ml.s3_model_io import save_best_hyperparameters, save_data_manifest, save_pipeline
 from ml.training_utils import (
     ModelType,
@@ -113,10 +116,7 @@ def tune_two_stage_price_models(
     # Save the training data manifest locally and to S3
     data_manifest = build_data_manifest(
         {"hourly": hourly_df, "quarter_hourly": qh_df},
-        metadata={
-            "workflow": report["run"]["name"],
-            "data": report["data"],
-        },
+        report=report,
     )
     data_manifest_local_path = save_local_manifest(data_manifest)
     data_manifest_s3_uri = save_data_manifest(data_manifest)
@@ -367,12 +367,12 @@ def parse_args() -> argparse.Namespace:
         description="Tune two-stage price forecasting models with Optuna"
     )
     parser.add_argument(
-        "--trials", type=int, default=10, help="Number of Optuna trials per stage"
+        "--trials", type=int, default=25, help="Number of Optuna trials per stage"
     )
     parser.add_argument(
         "--cv-splits-hourly",
         type=int,
-        default=3,
+        default=4,
         help="TimeSeriesSplit folds for CV hourly model",
     )
     parser.add_argument(

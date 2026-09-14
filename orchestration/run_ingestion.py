@@ -22,6 +22,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from ingestion.loader import load_range
+from ingestion.raw_data_inventory import update_raw_data_inventory
 from ingestion.s3_uploader import DATA_NAMES, is_already_uploaded, upload_to_s3, create_bucket_if_not_exists
 from ingestion.smard_client import fetch_range, RESOLUTION, SMARD_QUARTER_HOUR_SWITCH_DATE
 from ingestion.weather_client import fetch_historical_weather, fetch_forecast_weather_2
@@ -58,13 +59,17 @@ def parser():
     return arg_parser.parse_args()
 
 
-def _split_and_upload_by_day(df: pd.DataFrame, data_name: DATA_NAMES, force_upload: bool = False) -> None:
+def _split_and_upload_by_day(
+    df: pd.DataFrame, data_name: DATA_NAMES, force_upload: bool = False
+) -> list[dict]:
     """Split a DataFrame by calendar day and upload each day's data to S3,
     skipping days that are already uploaded. For SMARD data, also groups by
     resolution so hourly and quarter-hourly files are written separately."""
     if df is None or df.empty:
         logger.info(f"No {data_name.value} data to upload")
-        return
+        return []
+
+    uploaded_objects: list[dict] = []
 
     # For SMARD data, group by resolution as well as date
     if data_name == DATA_NAMES.SMARD and "resolution" in df.columns:
@@ -80,7 +85,7 @@ def _split_and_upload_by_day(df: pd.DataFrame, data_name: DATA_NAMES, force_uplo
             if not force_upload and is_already_uploaded(data_name, y, m, d, resolution=resolution_str):
                 logger.info(f"Skipping {y}-{m:02d}-{d:02d} {data_name.value} ({resolution_str}) — already uploaded")
                 continue
-            upload_to_s3(group, data_name, resolution=resolution_str)
+            uploaded_objects.append(upload_to_s3(group, data_name, resolution=resolution_str))
     else:
         grouped = df.groupby([
             df["timestamp"].dt.year,
@@ -92,7 +97,9 @@ def _split_and_upload_by_day(df: pd.DataFrame, data_name: DATA_NAMES, force_uplo
             if not force_upload and is_already_uploaded(data_name, y, m, d):
                 logger.info(f"Skipping {y}-{m:02d}-{d:02d} {data_name.value} — already uploaded")
                 continue
-            upload_to_s3(group, data_name)
+            uploaded_objects.append(upload_to_s3(group, data_name))
+
+    return uploaded_objects
 
 
 def _fetch_weather_chunked(start_date: datetime, end_date: datetime) -> pd.DataFrame:
@@ -135,7 +142,9 @@ def run_pipeline(start_date: datetime, end_date: datetime, force_upload: bool):
     logger.info(f"SMARD fetch done: {len(smard_data)} rows")
 
     # ── Split by day and upload (skipping days already in S3) ───────────
-    _split_and_upload_by_day(smard_data, DATA_NAMES.SMARD, force_upload=force_upload)
+    uploaded_objects = _split_and_upload_by_day(
+        smard_data, DATA_NAMES.SMARD, force_upload=force_upload
+    )
 
     # QUARTER-HOURLY DATA (only for dates after the switch date)
     start_date_for_quarter_hour = max(start_date, SMARD_QUARTER_HOUR_SWITCH_DATE)
@@ -144,14 +153,20 @@ def run_pipeline(start_date: datetime, end_date: datetime, force_upload: bool):
         smard_qh_data = fetch_range(start_date=start_date_for_quarter_hour, end_date=end_date, resolution=RESOLUTION.QUARTER_HOUR)
         logger.info(f"SMARD quarter-hourly fetch done: {len(smard_qh_data)} rows")
 
-        _split_and_upload_by_day(smard_qh_data, DATA_NAMES.SMARD, force_upload=force_upload)
+        uploaded_objects.extend(
+            _split_and_upload_by_day(
+                smard_qh_data, DATA_NAMES.SMARD, force_upload=force_upload
+            )
+        )
 
     # ── Fetch and upload historical weather data ─────────────
     logger.info(f"Fetching weather data for {start_date.date()} → {end_date.date()}")
     weather_data = _fetch_weather_chunked(start_date, end_date)
     logger.info(f"Weather fetch done: {len(weather_data)} rows")
 
-    _split_and_upload_by_day(weather_data, DATA_NAMES.WEATHER, force_upload=force_upload)
+    uploaded_objects.extend(
+        _split_and_upload_by_day(weather_data, DATA_NAMES.WEATHER, force_upload=force_upload)
+    )
 
     # ── Fetch and upload historical/current weather forecasts (leak-safe) ───────
     # These are the forecasts that were actually available at auction time,
@@ -161,7 +176,14 @@ def run_pipeline(start_date: datetime, end_date: datetime, force_upload: bool):
     weather_forecast_data = fetch_forecast_weather_2(start_date, end_date, run_utc_hour=0)
     logger.info(f"Weather forecast fetch done: {len(weather_forecast_data)} rows")
 
-    _split_and_upload_by_day(weather_forecast_data, DATA_NAMES.WEATHER_FORECAST, force_upload=force_upload)
+    uploaded_objects.extend(
+        _split_and_upload_by_day(
+            weather_forecast_data, DATA_NAMES.WEATHER_FORECAST, force_upload=force_upload
+        )
+    )
+
+    inventory = update_raw_data_inventory(uploaded_objects)
+    logger.info("Raw data inventory updated: %s", inventory["s3_uri"])
 
     # Load raw data from S3 into PostgreSQL
     load_range(start_date, end_date)
