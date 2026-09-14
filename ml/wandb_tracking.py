@@ -1,45 +1,53 @@
-import tomllib
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
+import subprocess
+from typing import Any
 
-import joblib
 import wandb
 
-from ml.training_utils import ModelType
+
+def _git_output(*args: str, cwd: str | None = None) -> str:
+    return subprocess.check_output(
+        ["git", *args],
+        cwd=cwd,
+        text=True,
+        stderr=subprocess.DEVNULL,
+    ).strip()
 
 
-@dataclass(frozen=True)
-class WandbConfig:
-    project: str
-    run_name_prefix: str
-    run_name_suffix: str
-    log_model_artifact: bool
-    log_prediction_plot: bool
+def get_git_metadata() -> dict[str, str | bool | None]:
+    """Return Git provenance for the current checkout without raising outside Git."""
+    try:
+        repository_root = _git_output("rev-parse", "--show-toplevel")
+        commit_sha = _git_output("rev-parse", "HEAD", cwd=repository_root)
+        short_commit_sha = _git_output(
+            "rev-parse", "--short", "HEAD", cwd=repository_root
+        )
+        is_dirty = bool(_git_output("status", "--porcelain", cwd=repository_root))
+    except (OSError, subprocess.CalledProcessError):
+        return {"available": False}
+
+    try:
+        branch = _git_output("symbolic-ref", "--short", "-q", "HEAD", cwd=repository_root)
+    except subprocess.CalledProcessError:
+        branch = None
+
+    return {
+        "available": True,
+        "commit_sha": commit_sha,
+        "short_commit_sha": short_commit_sha,
+        "branch": branch or None,
+        "is_dirty": is_dirty,
+        "repository_root": repository_root,
+    }
 
 
-def load_wandb_config(path: Path | None = None) -> WandbConfig:
-    """Load W&B tracking settings from the repository TOML configuration."""
-    config_path = path or Path(__file__).with_name("wandb_config.toml")
-    with config_path.open("rb") as config_file:
-        values = tomllib.load(config_file)["wandb"]
-
-    return WandbConfig(
-        project=values["project"],
-        run_name_prefix=values.get("run_name_prefix", ""),
-        run_name_suffix=values.get("run_name_suffix", ""),
-        log_model_artifact=values.get("log_model_artifact", False),
-        log_prediction_plot=values.get("log_prediction_plot", False),
-    )
-
-
-def start_wandb_run(run_name: str, group: str | None = None) -> wandb.sdk.wandb_run.Run:
-    """Start an online W&B run without collecting machine statistics."""
+def start_wandb_run(run_name: str, group: str | None = None) -> Any:
+    """Start an online W&B run with application-owned Git provenance."""
     return wandb.init(
         mode="online",
         project="zephyrwerk-platform-forecasting",
         name=run_name,
         group=group,
+        config={"git": get_git_metadata()},
         settings=wandb.Settings(
             mode="online",
             console="wrap",
@@ -49,57 +57,45 @@ def start_wandb_run(run_name: str, group: str | None = None) -> wandb.sdk.wandb_
     )
 
 
-def log_training_report(run, report: dict[str, object]) -> None:
-    """Log training configuration and scalar evaluation metrics to W&B."""
-    run.config.update(
-        {
-            "n_train": report["n_train"],
-            "n_test": report["n_test"],
-            "train_window": report["train_window"],
-            "test_window": report["test_window"],
-            "n_features": report["n_features"],
-            "hyperparameters": report["hyperparameters"],
-        },
-        allow_val_change=True,
-    )
-
-    metrics: dict[str, float] = {
-        "cv/mae_mean": report["cv_mae_mean"],
-        "cv/mae_std": report["cv_mae_std"],
-    }
-    metrics.update(
-        {
-            f"cv/fold_{fold_number}_mae": value
-            for fold_number, value in enumerate(report["cv_mae_per_fold"], start=1)
-        }
-    )
-
-    for section_name in ("holdout", "baseline_persistence"):
-        section = report[section_name]
-        metrics.update(
-            {f"{section_name}/{key}": value for key, value in section.items()}
-        )
-
-    run.log(metrics)
+def update_wandb_config(run: Any, values: dict[str, Any]) -> None:
+    """Update lightweight, reproducibility-relevant W&B configuration."""
+    run.config.update(values, allow_val_change=True)
 
 
-def log_optional_artifacts(
+def log_wandb_model_results(
     run,
-    pipeline,
-    mode: ModelType,
-    log_model_artifact: bool = False,
-    log_prediction_plot: bool = False,
+    model_name: str,
+    model_report: dict[str, Any],
 ) -> None:
-    """Upload the optional pipeline and holdout plot artifacts to W&B."""
-    artifacts_dir = Path("ml/artifacts")
+    """Log selected scalar outcomes and durable references without uploading files."""
+    config_fields = {
+        field: model_report[field]
+        for field in (
+            "n_train",
+            "n_holdout",
+            "n_features",
+            "hyperparameters",
+            "hyperparameters_source",
+            "artifacts",
+        )
+        if field in model_report
+    }
+    update_wandb_config(run, {f"models/{model_name}": config_fields})
 
-    if log_model_artifact:
-        model_path = artifacts_dir / f"{mode.value}_forecast_wandb.joblib"
-        joblib.dump(pipeline, model_path)
-        artifact = wandb.Artifact(f"{mode.value}-forecast-pipeline", type="model")
-        artifact.add_file(str(model_path))
-        run.log_artifact(artifact)
+    metrics: dict[str, float] = {}
+    if "cv_mae" in model_report:
+        metrics[f"{model_name}/cv_mae"] = float(model_report["cv_mae"])
+    for metric_group, metric_prefix in (
+        ("holdout", "holdout"),
+        ("baseline_persistence", "baseline"),
+    ):
+        for metric_name, metric_value in model_report.get("metrics", {}).get(
+            metric_group, {}
+        ).items():
+            if isinstance(metric_value, (int, float)):
+                metrics[f"{model_name}/{metric_prefix}_{metric_name}"] = float(metric_value)
 
-    if log_prediction_plot:
-        plot_path = artifacts_dir / f"{mode.value}_holdout.png"
-        run.log({"holdout/prediction_plot": wandb.Image(str(plot_path))})
+    if metrics:
+        run.log(metrics)
+        for metric_name, metric_value in metrics.items():
+            run.summary[metric_name] = metric_value

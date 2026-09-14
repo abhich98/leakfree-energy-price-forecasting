@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
-from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from sklearn.pipeline import Pipeline
 
 from ml.data_access import (
@@ -16,8 +15,8 @@ from ml.data_versioning import (
     save_local_manifest,
 )
 from ml.features.feature_engineering import (
-    TARGET_COLUMNS,
     BASELINE_PRED_COLUMNS,
+    TARGET_COLUMNS,
     HourlyPriceModelFeatureEngineer,
     QuarterHourPriceModelFeatureEngineer,
     drop_incomplete_days,
@@ -26,17 +25,18 @@ from ml.features.feature_engineering import (
 from ml.s3_model_io import load_best_hyperparameters, save_data_manifest, save_pipeline
 from ml.training_utils import (
     ModelType,
-    build_model_report,
-    fill_short_feature_gaps,
     broadcast_predictions_h2qh,
+    build_model_report,
     create_price_pipeline,
     draw_predictions,
-    save_report,
     evaluate_holdout,
+    fill_short_feature_gaps,
+    save_report,
 )
 from ml.wandb_tracking import (
-    log_optional_artifacts,
+    log_wandb_model_results,
     start_wandb_run,
+    update_wandb_config,
 )
 
 logging.basicConfig(
@@ -145,30 +145,9 @@ def _initialize_predictions_store(
     }
 
 
-def run_two_stage_price_model_training_prediction(
-    hourly_raw: pd.DataFrame,
-    quarter_hourly_raw: pd.DataFrame,
-    wandb_track: bool = True,
-) -> None:
-    """Backtest/Train both stages in weekly expanding windows and save the last pipelines.
-
-    Each weekly window is predicted by fresh Stage 1 and Stage 2 pipelines fit only
-    on prior delivery days. Stage 2 learns the deviation from Stage 1's historical
-    out-of-sample point prediction, then reconstructs quarter-hour prices.
-    """
-    stage1_hourly_model_type = ModelType.PRICE_HOURLY
-    stage2_qh_model_type = ModelType.PRICE_QUARTER_HOURLY
+def _initialize_report() -> dict[str, Any]:
     train_start_time = datetime.now(timezone.utc)
-
-    stage1_hourly_params, _ = _load_tuned_hyperparameters(
-        f"stage1_{stage1_hourly_model_type.value}_forecast",
-        STAGE1_HOURLY_PARAMS_VERSION,
-    )
-    stage2_qh_params, _ = _load_tuned_hyperparameters(
-        f"stage2_{stage2_qh_model_type.value}_forecast", STAGE2_QH_PARAMS_VERSION
-    )
-
-    report: dict[str, Any] = {
+    return {
         "run": {
             "name": "two_stage_price_model_training_prediction",
             "started_at": train_start_time.isoformat(),
@@ -189,6 +168,23 @@ def run_two_stage_price_model_training_prediction(
         "models": {},
     }
 
+
+def run_two_stage_price_model_training_prediction(
+    hourly_raw: pd.DataFrame,
+    quarter_hourly_raw: pd.DataFrame,
+    wandb_track: bool = True,
+) -> None:
+    """Backtest/Train both stages in weekly expanding windows and save the last pipelines.
+
+    Each weekly window is predicted by fresh Stage 1 and Stage 2 pipelines fit only
+    on prior delivery days. Stage 2 learns the deviation from Stage 1's historical
+    out-of-sample point prediction, then reconstructs quarter-hour prices.
+    """
+    stage1_hourly_model_type = ModelType.PRICE_HOURLY
+    stage2_qh_model_type = ModelType.PRICE_QUARTER_HOURLY
+    train_start_time = datetime.now(timezone.utc)
+
+    report = _initialize_report()
     tracking_run = None
     if wandb_track:
         tracking_run = start_wandb_run(
@@ -196,11 +192,18 @@ def run_two_stage_price_model_training_prediction(
             group="price_training_prediction",
         )
         report["run"]["wandb_run_id"] = tracking_run.id
-        tracking_run.config.update(report)
+        update_wandb_config(
+            tracking_run,
+            {
+                "workflow": report["run"]["name"],
+                "started_at": report["run"]["started_at"],
+                "backtest": report["backtest"],
+            },
+        )
 
     # Preprocessing the raw data
     logger.info(
-        "%sFilling short gaps and dropping incomplete days in hourly data%s",
+        "%sFilling short gaps and dropping incomplete days in the data%s",
         "*" * 10,
         "*" * 10,
     )
@@ -208,11 +211,6 @@ def run_two_stage_price_model_training_prediction(
         fill_short_feature_gaps(
             hourly_raw, omit_columns=["price_eur_mwh"], verbose=True
         )
-    )
-    logger.info(
-        "%sFilling short gaps and dropping incomplete days in quarter-hourly data%s",
-        "*" * 10,
-        "*" * 10,
     )
     qh_df = drop_incomplete_days(
         fill_short_feature_gaps(
@@ -231,6 +229,24 @@ def run_two_stage_price_model_training_prediction(
     report["data"]["data_version_id"] = data_manifest["data_version_id"]
     report["data"]["manifest_local_path"] = data_manifest_local_path
     report["data"]["manifest_s3_uri"] = data_manifest_s3_uri
+    if tracking_run is not None:
+        update_wandb_config(
+            tracking_run,
+            {
+                "data_version_id": data_manifest["data_version_id"],
+                "data_manifest_s3_uri": data_manifest_s3_uri,
+                "raw_inventory": data_manifest["raw_inventory"],
+            },
+        )
+
+    # Load the tuned hyperparameters for both stage 1 and stage 2 models
+    stage1_hourly_params, _ = _load_tuned_hyperparameters(
+            f"stage1_{stage1_hourly_model_type.value}_forecast",
+            STAGE1_HOURLY_PARAMS_VERSION,
+        )
+    stage2_qh_params, _ = _load_tuned_hyperparameters(
+        f"stage2_{stage2_qh_model_type.value}_forecast", STAGE2_QH_PARAMS_VERSION
+    )
 
     # Prediction windows for backtesting and prediction
     holdout_start = pd.Timestamp(HOLDOUT_START_DATE)
@@ -430,15 +446,8 @@ def run_two_stage_price_model_training_prediction(
             key_word=stg_val + "_weekly_expanding_window",
         )
 
-        if tracking_run is not None:
-            tracking_run.log(
-                {f"{stg_val}/{key}": val for key, val in stg_report.items()}
-            )
-
-    # Save the final report and weekly reports for the entire holdout period
+    # Save final model archives and record their durable references in the report.
     report["backtest"]["windows"] = weekly_reports
-    save_report(report, "price_forecast_training_prediction_report")
-
     stage1_hourly_model_s3_uri = save_pipeline(
         final_stage1_hourly_pipeline,
         model_name=f"stage1_{stage1_hourly_model_type.value}_forecast",
@@ -449,10 +458,22 @@ def run_two_stage_price_model_training_prediction(
         model_name=f"stage2_{stage2_qh_model_type.value}_forecast",
         metadata=report,
     )
+    report["models"][stage1_hourly_model_type.value].setdefault("artifacts", {})[
+        "pipeline"
+    ] = stage1_hourly_model_s3_uri
+    report["models"][stage2_qh_model_type.value].setdefault("artifacts", {})[
+        "pipeline"
+    ] = stage2_qh_model_s3_uri
+    save_report(report, f"{report['run']['name']}_report")
+
     logger.info("Saved weekly Stage 1 pipeline to %s", stage1_hourly_model_s3_uri)
     logger.info("Saved weekly Stage 2 pipeline to %s", stage2_qh_model_s3_uri)
 
     if tracking_run is not None:
+        for model_name, model_report in report["models"].items():
+            log_wandb_model_results(tracking_run, model_name, model_report)
+        tracking_run.summary["data_version_id"] = data_manifest["data_version_id"]
+        tracking_run.summary["data_manifest_s3_uri"] = data_manifest_s3_uri
         tracking_run.summary["stage1_hourly_model_s3_uri"] = stage1_hourly_model_s3_uri
         tracking_run.summary["stage2_quarter_hourly_model_s3_uri"] = (
             stage2_qh_model_s3_uri
@@ -479,5 +500,5 @@ if __name__ == "__main__":
     )
 
     run_two_stage_price_model_training_prediction(
-        hourly_raw, quarter_hourly_raw, wandb_track=False
+        hourly_raw, quarter_hourly_raw, wandb_track=True
     )

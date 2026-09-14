@@ -10,6 +10,10 @@ from ml.data_access import (
     load_hourly_price_model_features,
     load_quarter_hourly_price_model_features,
 )
+from ml.data_versioning import (
+    build_data_manifest,
+    save_local_manifest,
+)
 from ml.features.feature_engineering import (
     BASELINE_PRED_COLUMNS,
     TARGET_COLUMNS,
@@ -17,17 +21,13 @@ from ml.features.feature_engineering import (
     split_x_y,
     temporal_split,
 )
-from ml.data_versioning import (
-    build_data_manifest,
-    save_local_manifest,
-)
 from ml.s3_model_io import save_best_hyperparameters, save_data_manifest, save_pipeline
 from ml.training_utils import (
     ModelType,
     build_model_report,
-    fill_short_feature_gaps,
     draw_predictions,
     evaluate_holdout,
+    fill_short_feature_gaps,
     save_report,
 )
 from ml.tuning_utils import (
@@ -37,7 +37,11 @@ from ml.tuning_utils import (
     objective_stage2,
     predict_hourly_for_qh_index,
 )
-from ml.wandb_tracking import start_wandb_run
+from ml.wandb_tracking import (
+    log_wandb_model_results,
+    start_wandb_run,
+    update_wandb_config,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -51,18 +55,14 @@ HOLDOUT_START_DATE = "2026-01-01"
 HOLDOUT_END_DATE_EXCLUSIVE = "2026-04-01"
 
 
-def tune_two_stage_price_models(
-    n_trials: int = 40,
-    hourly_cv_splits: int = 3,
-    qh_cv_splits: int = 2,
-    wandb_track: bool = True,
-) -> None:
+def _initialize_report(
+        n_trials: int,
+        hourly_cv_splits: int,
+        qh_cv_splits: int,
+    ) -> dict[str, Any]:
 
-    stage1_hourly_model_type = ModelType.PRICE_HOURLY
-    stage2_qh_model_type = ModelType.PRICE_QUARTER_HOURLY
     train_start_time = datetime.now(timezone.utc)
-
-    report: dict[str, Any] = {
+    return {
         "run": {
             "name": "two_stage_price_model_hyperparameter_tuning",
             "started_at": train_start_time.isoformat(),
@@ -85,6 +85,23 @@ def tune_two_stage_price_models(
         "models": {},
     }
 
+
+def tune_two_stage_price_models(
+    n_trials: int = 40,
+    hourly_cv_splits: int = 3,
+    qh_cv_splits: int = 2,
+    wandb_track: bool = True,
+) -> None:
+
+    stage1_hourly_model_type = ModelType.PRICE_HOURLY
+    stage2_qh_model_type = ModelType.PRICE_QUARTER_HOURLY
+    train_start_time = datetime.now(timezone.utc)
+
+    report: dict[str, Any] = _initialize_report(
+        n_trials=n_trials,
+        hourly_cv_splits=hourly_cv_splits,
+        qh_cv_splits=qh_cv_splits,
+    )
     tracking_run = None
     if wandb_track:
         tracking_run = start_wandb_run(
@@ -92,7 +109,14 @@ def tune_two_stage_price_models(
             group="price_hyperparameter_tuning",
         )
         report["run"]["wandb_run_id"] = tracking_run.id
-        tracking_run.config.update(report)
+        update_wandb_config(
+            tracking_run,
+            {
+                "workflow": report["run"]["name"],
+                "started_at": report["run"]["started_at"],
+                "search": report["search"],
+            },
+        )
 
     logger.info("Loading raw feature contracts")
     hourly_raw = load_hourly_price_model_features(
@@ -106,6 +130,7 @@ def tune_two_stage_price_models(
         filter_by_local_timestamp=True,
     )
 
+    # Preprocess the raw data by filling short gaps and dropping incomplete days
     hourly_df = drop_incomplete_days(
         fill_short_feature_gaps(hourly_raw, omit_columns=["price_eur_mwh"])
     )
@@ -124,6 +149,15 @@ def tune_two_stage_price_models(
     report["data"]["data_version_id"] = data_manifest["data_version_id"]
     report["data"]["manifest_local_path"] = data_manifest_local_path
     report["data"]["manifest_s3_uri"] = data_manifest_s3_uri
+    if tracking_run is not None:
+        update_wandb_config(
+            tracking_run,
+            {
+                "data_version_id": data_manifest["data_version_id"],
+                "data_manifest_s3_uri": data_manifest_s3_uri,
+                "raw_inventory": data_manifest["raw_inventory"],
+            },
+        )
 
     # Split the data into training/validation and holdout sets for both hourly and quarter-hourly models
     X_hourly, y_hourly = split_x_y(hourly_df, model_type=stage1_hourly_model_type)
@@ -134,7 +168,6 @@ def tune_two_stage_price_models(
             holdout_start_date=HOLDOUT_START_DATE,
         )
     )
-
     X_qh_trainval, X_qh_holdout, _, _ = temporal_split(
         qh_df,
         qh_df[TARGET_COLUMNS[ModelType.PRICE_QUARTER_HOURLY]],
@@ -341,22 +374,16 @@ def tune_two_stage_price_models(
     ] = qh_model_s3_uri
 
     # Save the final report to S3
-    save_report(report, "price_forecast_hyperparameter_tuning_report")
+    save_report(report, f"{report['run']['name']}_report")
 
     logger.info("Saved tuned hourly (stage 1) model to %s", hourly_model_s3_uri)
     logger.info("Saved tuned quarter-hourly (stage 2) model to %s", qh_model_s3_uri)
 
     if tracking_run is not None:
-        tracking_run.log(
-            {
-                "hourly/best_cv_mae": float(price_hourly_study.best_value),
-                "quarter_hourly/best_cv_mae": float(price_qh_study.best_value),
-                "hourly/holdout_mae": float(hourly_holdout_report["mae"]),
-                "quarter_hourly/holdout_mae": float(qh_holdout_report["mae"]),
-                "hourly/holdout_rmse": float(hourly_holdout_report["rmse"]),
-                "quarter_hourly/holdout_rmse": float(qh_holdout_report["rmse"]),
-            }
-        )
+        for model_name, model_report in report["models"].items():
+            log_wandb_model_results(tracking_run, model_name, model_report)
+        tracking_run.summary["data_version_id"] = data_manifest["data_version_id"]
+        tracking_run.summary["data_manifest_s3_uri"] = data_manifest_s3_uri
         tracking_run.summary["stage1_hourly_model_s3_uri"] = hourly_model_s3_uri
         tracking_run.summary["stage2_quarter_hourly_model_s3_uri"] = qh_model_s3_uri
         tracking_run.finish()
@@ -367,7 +394,7 @@ def parse_args() -> argparse.Namespace:
         description="Tune two-stage price forecasting models with Optuna"
     )
     parser.add_argument(
-        "--trials", type=int, default=25, help="Number of Optuna trials per stage"
+        "--trials", type=int, default=10, help="Number of Optuna trials per stage"
     )
     parser.add_argument(
         "--cv-splits-hourly",
