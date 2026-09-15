@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 from datetime import datetime, timezone
@@ -47,8 +48,8 @@ logger = logging.getLogger(__name__)
 
 HOURLY_START_DATE = "2023-05-01"
 QUARTER_HOURLY_START_DATE = "2025-10-01"
-HOLDOUT_START_DATE = "2026-01-01"
-HOLDOUT_END_DATE_EXCLUSIVE = "2026-04-01"
+HOLDOUT_START_DATE = "2026-09-07"
+HOLDOUT_END_DATE_EXCLUSIVE = "2026-09-12"
 
 WEEKLY_PREDICTION_DAYS = 7
 WEEK_START_DAY_IDX = 0  # Monday
@@ -197,6 +198,7 @@ def run_two_stage_price_model_training_prediction(
             {
                 "workflow": report["run"]["name"],
                 "started_at": report["run"]["started_at"],
+                "data": report["data"],
                 "backtest": report["backtest"],
             },
         )
@@ -241,9 +243,9 @@ def run_two_stage_price_model_training_prediction(
 
     # Load the tuned hyperparameters for both stage 1 and stage 2 models
     stage1_hourly_params, _ = _load_tuned_hyperparameters(
-            f"stage1_{stage1_hourly_model_type.value}_forecast",
-            STAGE1_HOURLY_PARAMS_VERSION,
-        )
+        f"stage1_{stage1_hourly_model_type.value}_forecast",
+        STAGE1_HOURLY_PARAMS_VERSION,
+    )
     stage2_qh_params, _ = _load_tuned_hyperparameters(
         f"stage2_{stage2_qh_model_type.value}_forecast", STAGE2_QH_PARAMS_VERSION
     )
@@ -469,11 +471,12 @@ def run_two_stage_price_model_training_prediction(
     logger.info("Saved weekly Stage 1 pipeline to %s", stage1_hourly_model_s3_uri)
     logger.info("Saved weekly Stage 2 pipeline to %s", stage2_qh_model_s3_uri)
 
+    ## WandB Logging
+
     if tracking_run is not None:
         for model_name, model_report in report["models"].items():
             log_wandb_model_results(tracking_run, model_name, model_report)
-        tracking_run.summary["data_version_id"] = data_manifest["data_version_id"]
-        tracking_run.summary["data_manifest_s3_uri"] = data_manifest_s3_uri
+
         tracking_run.summary["stage1_hourly_model_s3_uri"] = stage1_hourly_model_s3_uri
         tracking_run.summary["stage2_quarter_hourly_model_s3_uri"] = (
             stage2_qh_model_s3_uri
@@ -481,7 +484,21 @@ def run_two_stage_price_model_training_prediction(
         tracking_run.finish()
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Train two-stage price forecasting models"
+    )
+    parser.add_argument(
+        "--no-wandb",
+        action="store_true",
+        help="Disable W&B tracking",
+    )
+
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    args = parse_args()
 
     hourly_raw = load_hourly_price_model_features(
         start_date=HOURLY_START_DATE,
@@ -500,5 +517,5 @@ if __name__ == "__main__":
     )
 
     run_two_stage_price_model_training_prediction(
-        hourly_raw, quarter_hourly_raw, wandb_track=True
+        hourly_raw, quarter_hourly_raw, wandb_track=not args.no_wandb
     )

@@ -1,6 +1,7 @@
 import argparse
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import optuna
@@ -33,6 +34,7 @@ from ml.training_utils import (
 from ml.tuning_utils import (
     create_hourly_pipeline,
     create_qh_pipeline,
+    load_search_spaces,
     objective_stage1,
     objective_stage2,
     predict_hourly_for_qh_index,
@@ -53,13 +55,14 @@ HOURLY_START_DATE = "2023-05-01"
 QUARTER_HOURLY_START_DATE = "2025-10-01"
 HOLDOUT_START_DATE = "2026-01-01"
 HOLDOUT_END_DATE_EXCLUSIVE = "2026-04-01"
+DEFAULT_HYPERPARAMS_CONFIG_FILE = "../config/suggested_xgb_params.yml"
 
 
 def _initialize_report(
-        n_trials: int,
-        hourly_cv_splits: int,
-        qh_cv_splits: int,
-    ) -> dict[str, Any]:
+    n_trials: int,
+    hourly_cv_splits: int,
+    qh_cv_splits: int,
+) -> dict[str, Any]:
 
     train_start_time = datetime.now(timezone.utc)
     return {
@@ -86,11 +89,39 @@ def _initialize_report(
     }
 
 
+def _wandb_log_optuna_trial(
+    run: Any,
+    study: optuna.Study,
+    trial: optuna.trial.FrozenTrial,
+) -> None:
+    """Log one completed Optuna trial to the parent W&B run."""
+    if trial.value is None or run is None:
+        return
+
+    metrics: dict[str, int | float] = {
+        f"tuning/{study.study_name}/trial_number": trial.number,
+        f"tuning/{study.study_name}/objective_mae": float(trial.value),
+        f"tuning/{study.study_name}/best_objective_mae": float(study.best_value),
+    }
+    for parameter_name, parameter_value in trial.params.items():
+        if isinstance(parameter_value, (int, float)):
+            metrics[f"tuning/{study.study_name}/params/{parameter_name}"] = (
+                parameter_value
+            )
+    for attribute_name, attribute_value in trial.user_attrs.items():
+        if attribute_name.startswith("fold_") and isinstance(
+            attribute_value, (int, float)
+        ):
+            metrics[f"tuning/{study.study_name}/{attribute_name}"] = attribute_value
+    run.log(metrics)
+
+
 def tune_two_stage_price_models(
     n_trials: int = 40,
     hourly_cv_splits: int = 3,
     qh_cv_splits: int = 2,
     wandb_track: bool = True,
+    hyperparams_config_file: str = DEFAULT_HYPERPARAMS_CONFIG_FILE,
 ) -> None:
 
     stage1_hourly_model_type = ModelType.PRICE_HOURLY
@@ -102,6 +133,9 @@ def tune_two_stage_price_models(
         hourly_cv_splits=hourly_cv_splits,
         qh_cv_splits=qh_cv_splits,
     )
+    search_spaces = load_search_spaces(hyperparams_config_file)
+    report["search"]["hyperparams_config_file"] = hyperparams_config_file
+    report["search"]["spaces"] = search_spaces
     tracking_run = None
     if wandb_track:
         tracking_run = start_wandb_run(
@@ -114,6 +148,7 @@ def tune_two_stage_price_models(
             {
                 "workflow": report["run"]["name"],
                 "started_at": report["run"]["started_at"],
+                "data": report["data"],
                 "search": report["search"],
             },
         )
@@ -189,6 +224,7 @@ def tune_two_stage_price_models(
     price_hourly_study.optimize(
         lambda trial: objective_stage1(
             trial,
+            search_spaces["hourly"],
             hourly_cv_splits,
             X_hourly_trainval,
             y_hourly_trainval,
@@ -196,6 +232,9 @@ def tune_two_stage_price_models(
         ),
         n_trials=n_trials,
         show_progress_bar=False,
+        callbacks=[
+            lambda study, trial: _wandb_log_optuna_trial(tracking_run, study, trial)
+        ],
     )
 
     best_hourly_params = price_hourly_study.best_params
@@ -227,6 +266,7 @@ def tune_two_stage_price_models(
     price_qh_study.optimize(
         lambda trial: objective_stage2(
             trial,
+            search_spaces["quarter_hourly"],
             qh_cv_splits,
             hourly_df.loc[X_hourly_trainval.index],
             X_qh_trainval,
@@ -239,6 +279,9 @@ def tune_two_stage_price_models(
         ),
         n_trials=n_trials,
         show_progress_bar=False,
+        callbacks=[
+            lambda study, trial: _wandb_log_optuna_trial(tracking_run, study, trial)
+        ],
     )
 
     best_qh_params = price_qh_study.best_params
@@ -382,8 +425,7 @@ def tune_two_stage_price_models(
     if tracking_run is not None:
         for model_name, model_report in report["models"].items():
             log_wandb_model_results(tracking_run, model_name, model_report)
-        tracking_run.summary["data_version_id"] = data_manifest["data_version_id"]
-        tracking_run.summary["data_manifest_s3_uri"] = data_manifest_s3_uri
+
         tracking_run.summary["stage1_hourly_model_s3_uri"] = hourly_model_s3_uri
         tracking_run.summary["stage2_quarter_hourly_model_s3_uri"] = qh_model_s3_uri
         tracking_run.finish()
@@ -413,6 +455,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable W&B tracking",
     )
+    parser.add_argument(
+        "--hyperparams-config",
+        type=Path,
+        default=Path(__file__).parent / Path(DEFAULT_HYPERPARAMS_CONFIG_FILE),
+        help=(
+            "YAML file containing per-study Optuna ranges "
+            f"(default: {DEFAULT_HYPERPARAMS_CONFIG_FILE})"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -423,4 +474,5 @@ if __name__ == "__main__":
         hourly_cv_splits=args.cv_splits_hourly,
         qh_cv_splits=args.cv_splits_quarter_hourly,
         wandb_track=not args.no_wandb,
+        hyperparams_config_file=str(args.hyperparams_config),
     )

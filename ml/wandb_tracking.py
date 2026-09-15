@@ -26,7 +26,9 @@ def get_git_metadata() -> dict[str, str | bool | None]:
         return {"available": False}
 
     try:
-        branch = _git_output("symbolic-ref", "--short", "-q", "HEAD", cwd=repository_root)
+        branch = _git_output(
+            "symbolic-ref", "--short", "-q", "HEAD", cwd=repository_root
+        )
     except subprocess.CalledProcessError:
         branch = None
 
@@ -89,11 +91,13 @@ def log_wandb_model_results(
         ("holdout", "holdout"),
         ("baseline_persistence", "baseline"),
     ):
-        for metric_name, metric_value in model_report.get("metrics", {}).get(
-            metric_group, {}
-        ).items():
+        for metric_name, metric_value in (
+            model_report.get("metrics", {}).get(metric_group, {}).items()
+        ):
             if isinstance(metric_value, (int, float)):
-                metrics[f"{model_name}/{metric_prefix}_{metric_name}"] = float(metric_value)
+                metrics[f"{model_name}/{metric_prefix}_{metric_name}"] = float(
+                    metric_value
+                )
 
     if metrics:
         run.log(metrics)

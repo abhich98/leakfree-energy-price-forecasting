@@ -1,7 +1,9 @@
+from pathlib import Path
 from typing import Any, Callable
 
 import optuna
 import pandas as pd
+import yaml
 from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import Pipeline
@@ -17,19 +19,73 @@ from ml.training_utils import (
     create_price_pipeline,
 )
 
+SearchSpace = dict[str, dict[str, Any]]
 
-def suggest_xgb_params(trial: optuna.Trial) -> dict[str, Any]:
-    """Suggest one XGBoost hyperparameter configuration for an Optuna trial."""
-    return {
-        "n_estimators": trial.suggest_int("n_estimators", 200, 900),
-        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
-        "max_depth": trial.suggest_int("max_depth", 3, 10),
-        "subsample": trial.suggest_float("subsample", 0.6, 1.0),
-        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
-        "min_child_weight": trial.suggest_float("min_child_weight", 1.0, 10.0),
-        "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
-        "reg_lambda": trial.suggest_float("reg_lambda", 1e-3, 20.0, log=True),
-    }
+
+def load_search_spaces(config_path: str | Path) -> dict[str, SearchSpace]:
+    """Load and validate the per-study Optuna search spaces from YAML."""
+    with Path(config_path).open() as config_file:
+        config = yaml.safe_load(config_file)
+
+    required_studies = {"hourly", "quarter_hourly"}
+    if not (isinstance(config, dict) and required_studies.issubset(config)):
+        raise ValueError(
+            "Search-space YAML must contain exactly 'hourly' and 'quarter_hourly' mappings"
+        )
+
+    search_spaces: dict[str, SearchSpace] = {}
+    for study_name, space in config.items():
+        if not isinstance(space, dict) or not space:
+            raise ValueError(f"Search space '{study_name}' must be a non-empty mapping")
+
+        validated_space: SearchSpace = {}
+        for parameter_name, specification in space.items():
+            if not isinstance(specification, dict):
+                raise ValueError(f"Parameter '{parameter_name}' must be a mapping")
+
+            if specification.get("type") not in {"int", "float"}:
+                raise ValueError(
+                    f"Parameter '{parameter_name}' must have type 'int' or 'float'"
+                )
+            if "low" not in specification or "high" not in specification:
+                raise ValueError(
+                    f"Parameter '{parameter_name}' must define both low and high"
+                )
+            if specification["low"] >= specification["high"]:
+                raise ValueError(f"Parameter '{parameter_name}' must have low < high")
+            validated_space[parameter_name] = specification
+        search_spaces[study_name] = validated_space
+
+    return search_spaces
+
+
+def suggest_xgb_params(
+    trial: optuna.Trial, search_space: SearchSpace
+) -> dict[str, Any]:
+    """Suggest one XGBoost configuration from a validated YAML search space."""
+    params: dict[str, Any] = {}
+    for parameter_name, specification in search_space.items():
+        suggest_kwargs: dict[str, Any] = {
+            "log": bool(specification.get("log", False)),
+        }
+        if "step" in specification:
+            suggest_kwargs["step"] = specification["step"]
+
+        if specification["type"] == "int":
+            params[parameter_name] = trial.suggest_int(
+                parameter_name,
+                int(specification["low"]),
+                int(specification["high"]),
+                **suggest_kwargs,
+            )
+        else:
+            params[parameter_name] = trial.suggest_float(
+                parameter_name,
+                float(specification["low"]),
+                float(specification["high"]),
+                **suggest_kwargs,
+            )
+    return params
 
 
 def create_hourly_pipeline(model_params: dict[str, Any]) -> Pipeline:
@@ -66,13 +122,14 @@ def predict_hourly_for_qh_index(
 # Do not modify, this function is used as the objective for Optuna stage 1 tuning
 def objective_stage1(
     trial: optuna.Trial,
+    search_space: SearchSpace,
     cv_splits: int,
     X_stage1_trainval: pd.DataFrame,
     y_stage1_trainval: pd.Series,
     create_stage1_pipeline: Callable[[dict[str, Any]], Pipeline],
 ) -> float:
     """Return mean time-series CV MAE for a candidate model."""
-    params = suggest_xgb_params(trial)
+    params = suggest_xgb_params(trial, search_space)
     pipeline = create_stage1_pipeline(params)
     splitter = TimeSeriesSplit(n_splits=cv_splits, gap=24)
 
@@ -98,6 +155,7 @@ def objective_stage1(
 # Do not modify, this function is used as the objective for Optuna stage 2 tuning
 def objective_stage2(
     trial: optuna.Trial,
+    search_space: SearchSpace,
     cv_splits: int,
     stage1_trainval: pd.DataFrame,
     stage2_trainval: pd.DataFrame,
@@ -111,7 +169,7 @@ def objective_stage2(
     ],
 ) -> float:
     """Return reconstructed-price CV MAE for a candidate stage 2 model, which uses stage 1 predictions as features."""
-    stage2_params = suggest_xgb_params(trial)
+    stage2_params = suggest_xgb_params(trial, search_space)
     splitter = TimeSeriesSplit(n_splits=cv_splits, gap=4)
     fold_mae: list[float] = []
 
