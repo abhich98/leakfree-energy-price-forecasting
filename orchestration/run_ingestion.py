@@ -15,8 +15,12 @@ Incremental: fetches yesterday's data only.
 
 import argparse
 import logging
+import sys
+import os
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -27,9 +31,15 @@ from ingestion.raw_data_inventory import update_raw_data_inventory
 from ingestion.s3_uploader import DATA_NAMES, create_bucket_if_not_exists, is_already_uploaded, upload_to_s3
 from ingestion.smard_client import RESOLUTION, SMARD_QUARTER_HOUR_SWITCH_DATE, fetch_range
 from ingestion.weather_client import fetch_forecast_weather_2, fetch_historical_weather
+from utils.config_hash import config_hash
+from orchestration.dbt_runner import run_dbt
 from orchestration.run_audit import (
     finish_pipeline_run,
     finish_stage_run,
+    get_latest_stage_details,
+    get_latest_stage_status,
+    get_pipeline_run,
+    reopen_pipeline_run,
     start_pipeline_run,
     start_stage_run,
 )
@@ -37,7 +47,6 @@ from orchestration.run_audit import (
 load_dotenv()  # Load environment variables from .env file
 
 logger = logging.getLogger(__name__)
-StageResult = TypeVar("StageResult")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -46,27 +55,6 @@ logging.basicConfig(
         logging.FileHandler("pipeline.log"),        # also writes to file
     ]
 )
-
-def parser():
-    arg_parser = argparse.ArgumentParser(
-        description=(
-            "Run the data pipeline to fetch SMARD and weather data and upload to S3. "
-            "The script receives dates in UTC timezone and processes them in UTC."
-        )
-    )
-    arg_parser.add_argument("--start_date", 
-                            type=str, 
-                            help="The start date in YYYY-MM-DD format. Required for full_backfill."
-                        )
-    arg_parser.add_argument("--end_date", 
-                            type=str, 
-                            help="The end date in YYYY-MM-DD format. Required for full_backfill."
-                        )
-    arg_parser.add_argument("--force_upload",
-                            action="store_true",
-                            help="Force upload of data even if it already exists in S3."
-                        )
-    return arg_parser.parse_args()
 
 
 def _split_and_upload_by_day(
@@ -206,21 +194,111 @@ def load_postgres(start_date: datetime, end_date: datetime) -> None:
     load_range(start_date, end_date)
 
 
+@dataclass(frozen=True)
+class EltStage:
+    name: str
+    dependencies: tuple[str, ...]
+    operation: Callable[[UUID, dict[str, Any]], Any]
+    details: Callable[[Any, dict[str, Any]], dict[str, Any]]
+
+
+def _stage_config_hash(stage_name: str, context: dict[str, Any]) -> str:
+    configuration: dict[str, Any] = {
+        "pipeline": "elt",
+        "stage": stage_name,
+        "requested_start": context["requested_start"].isoformat(),
+        "requested_end": context["requested_end"].isoformat(),
+    }
+    if stage_name == "ingest_and_upload":
+        configuration.update(
+            {
+                "force_upload": context["force_upload"],
+                "smard_base_url": os.environ.get("ZEPHYRWERK_SMARD_BASE_URL"),
+                "weather_historical_url": os.environ.get("ZEPHYRWERK_OPENMETEO_HISTORICAL_URL"),
+                "weather_forecast_url": os.environ.get("ZEPHYRWERK_OPENMETEO_FORECAST_URL"),
+            }
+        )
+    return config_hash(configuration)
+
+
+def _ingest_stage_details(uploaded_objects: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"uploaded_object_count": len(uploaded_objects), "uploaded_objects": uploaded_objects}
+
+
+ELT_STAGES = (
+    EltStage(
+        "ingest_and_upload",
+        (),
+        lambda _, context: ingest_and_upload(
+            context["requested_start"], context["requested_end"], context["force_upload"]
+        ),
+        lambda result, _: _ingest_stage_details(result),
+    ),
+    EltStage(
+        "record_raw_inventory",
+        ("ingest_and_upload",),
+        lambda _, context: record_raw_inventory(context["ingest_and_upload"]),
+        lambda inventory, _: {"inventory_id": inventory["inventory_id"], "s3_uri": inventory["s3_uri"]},
+    ),
+    EltStage(
+        "load_postgres",
+        ("record_raw_inventory",),
+        lambda _, context: load_postgres(context["requested_start"], context["requested_end"]),
+        lambda _, context: {
+            "requested_start": context["requested_start"].isoformat(),
+            "requested_end": context["requested_end"].isoformat(),
+        },
+    ),
+    EltStage("run_dbt", ("load_postgres",), lambda run_id, _: run_dbt(run_id), lambda result, _: result),
+)
+
+
 def _run_stage(
-    run_id,
-    stage_name: str,
-    operation: Callable[[], StageResult],
-    details: Callable[[StageResult], dict[str, Any]],
-) -> StageResult:
+    run_id: UUID, stage: EltStage, context: dict[str, Any]
+) -> Any:
     """Execute one stage and ensure its audit record is finalized on every outcome."""
-    stage_run_id = start_stage_run(run_id, stage_name)
+    stage_run_id = start_stage_run(run_id, stage.name, _stage_config_hash(stage.name, context))
     try:
-        result = operation()
+        result = stage.operation(run_id, context)
     except Exception as exc:
         finish_stage_run(stage_run_id, "failed", error_message=str(exc))
         raise
-    finish_stage_run(stage_run_id, "succeeded", details=details(result))
+    finish_stage_run(stage_run_id, "succeeded", details=stage.details(result, context))
     return result
+
+
+def _restore_context_from_successful_stages(run_id: UUID, context: dict[str, Any]) -> None:
+    if get_latest_stage_status(run_id, "ingest_and_upload") == "succeeded":
+        details = get_latest_stage_details(run_id, "ingest_and_upload") or {}
+        uploaded_objects = details.get("uploaded_objects")
+        if uploaded_objects is None:
+            raise RuntimeError("Cannot resume: ingestion attempt does not contain uploaded object details.")
+        context["ingest_and_upload"] = uploaded_objects
+
+
+def _run_elt_stages(run_id: UUID, context: dict[str, Any], resume: bool) -> None:
+    successful_stages: set[str] = set()
+    start_index = 0
+    if resume:
+        _restore_context_from_successful_stages(run_id, context)
+        statuses = {stage.name: get_latest_stage_status(run_id, stage.name) for stage in ELT_STAGES}
+        successful_stages = {name for name, status in statuses.items() if status == "succeeded"}
+        start_index = next(
+            (index for index, stage in enumerate(ELT_STAGES) if statuses[stage.name] != "succeeded"),
+            len(ELT_STAGES),
+        )
+        if start_index == len(ELT_STAGES):
+            raise ValueError(f"Pipeline run {run_id} has no incomplete ELT stages.")
+
+    for stage in ELT_STAGES[start_index:]:
+        missing_dependencies = set(stage.dependencies) - successful_stages
+        if missing_dependencies:
+            raise RuntimeError(
+                f"Cannot run {stage.name}; required stages have not succeeded: {sorted(missing_dependencies)}."
+            )
+        result = _run_stage(run_id, stage, context)
+        context[stage.name] = result
+        successful_stages.add(stage.name)
 
 
 def run_pipeline(
@@ -228,52 +306,103 @@ def run_pipeline(
 ) -> None:
     """Run the auditable ingestion, inventory, and PostgreSQL-load stages."""
     start_time = datetime.now(timezone.utc)
-    run_id = start_pipeline_run("ingestion", start_date, end_date)
-    inventory: dict[str, Any] | None = None
+    context = {
+        "requested_start": start_date,
+        "requested_end": end_date,
+        "force_upload": force_upload,
+    }
+    run_id = start_pipeline_run(
+        "elt",
+        start_date,
+        end_date,
+        config_hash(
+            {
+                "pipeline": "elt",
+                "force_upload": force_upload,
+                "smard_base_url": os.environ.get("ZEPHYRWERK_SMARD_BASE_URL"),
+                "weather_historical_url": os.environ.get("ZEPHYRWERK_OPENMETEO_HISTORICAL_URL"),
+                "weather_forecast_url": os.environ.get("ZEPHYRWERK_OPENMETEO_FORECAST_URL"),
+            }
+        ),
+    )
 
     try:
-        uploaded_objects = _run_stage(
-            run_id,
-            "ingest_and_upload",
-            lambda: ingest_and_upload(start_date, end_date, force_upload),
-            lambda objects: {"uploaded_object_count": len(objects)},
-        )
-        inventory = _run_stage(
-            run_id,
-            "record_raw_inventory",
-            lambda: record_raw_inventory(uploaded_objects),
-            lambda result: {
-                "inventory_id": result["inventory_id"],
-                "s3_uri": result["s3_uri"],
-            },
-        )
-        _run_stage(
-            run_id,
-            "load_postgres",
-            lambda: load_postgres(start_date, end_date),
-            lambda _: {
-                "requested_start": start_date.isoformat(),
-                "requested_end": end_date.isoformat(),
-            },
-        )
+        _run_elt_stages(run_id, context, resume=False)
     except Exception as exc:
         finish_pipeline_run(
             run_id,
             "failed",
-            raw_inventory_uri=inventory["s3_uri"] if inventory else None,
+            raw_inventory_uri=context.get("record_raw_inventory", {}).get("s3_uri"),
             error_message=str(exc),
         )
         raise
 
-    finish_pipeline_run(run_id, "succeeded", raw_inventory_uri=inventory["s3_uri"])
+    finish_pipeline_run(run_id, "succeeded", raw_inventory_uri=context["record_raw_inventory"]["s3_uri"])
     logger.info("Pipeline run %s completed in %s", run_id, datetime.now(timezone.utc) - start_time)
+
+
+def resume_pipeline(run_id: UUID) -> None:
+    """Resume an incomplete ELT run from its first failed or missing stage."""
+    pipeline_run = get_pipeline_run(run_id)
+    if pipeline_run["pipeline_name"] != "elt":
+        raise ValueError(f"Pipeline run {run_id} is not an ELT run.")
+
+    context = {
+        "requested_start": pipeline_run["requested_start"],
+        "requested_end": pipeline_run["requested_end"],
+        "force_upload": False,
+    }
+    reopen_pipeline_run(run_id)
+    try:
+        _run_elt_stages(run_id, context, resume=True)
+    except Exception as exc:
+        finish_pipeline_run(
+            run_id,
+            "failed",
+            raw_inventory_uri=pipeline_run["raw_inventory_uri"],
+            error_message=str(exc),
+        )
+        raise
+    finish_pipeline_run(
+        run_id,
+        "succeeded",
+        raw_inventory_uri=pipeline_run["raw_inventory_uri"],
+    )
+
+
+def parser():
+    arg_parser = argparse.ArgumentParser(
+        description=(
+            "Run the data pipeline to fetch SMARD and weather data and upload to S3. "
+            "The script receives dates in UTC timezone and processes them in UTC."
+        )
+    )
+    arg_parser.add_argument("--start_date", 
+                            type=str, 
+                            help="The start date in YYYY-MM-DD format. Required for full_backfill."
+                        )
+    arg_parser.add_argument("--end_date", 
+                            type=str, 
+                            help="The end date in YYYY-MM-DD format. Required for full_backfill."
+                        )
+    arg_parser.add_argument("--force_upload",
+                            action="store_true",
+                            help="Force upload of data even if it already exists in S3."
+                        )
+    arg_parser.add_argument("--resume-run", help="Resume an incomplete ELT run by UUID.")
+    return arg_parser.parse_args()
 
 
 if __name__ == "__main__":
     # The scripte receives dates in UTC timezome.
     args = parser()
-    
-    if args.start_date and args.end_date:
+    if args.resume_run:
+        if args.start_date or args.end_date or args.force_upload:
+            raise ValueError("--resume-run cannot be combined with date or upload options.")
+        resume_pipeline(UUID(args.resume_run))
+        sys.exit(0)
+
+    elif args.start_date and args.end_date:
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d").replace(tzinfo=ZoneInfo("UTC"))
 
         end_date = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=ZoneInfo("UTC"))
@@ -290,7 +419,7 @@ if __name__ == "__main__":
         end_date = datetime.now(tz=ZoneInfo("UTC"))
 
     run_pipeline(
-        start_date=start_date, 
+        start_date=start_date,
         end_date=end_date,
-        force_upload=args.force_upload
-        )
+        force_upload=args.force_upload,
+    )

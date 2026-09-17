@@ -3,53 +3,6 @@ CREATE SCHEMA IF NOT EXISTS staging;
 CREATE SCHEMA IF NOT EXISTS analytics;
 CREATE SCHEMA IF NOT EXISTS operations;
 
-CREATE TABLE IF NOT EXISTS operations.pipeline_runs(
-    run_id UUID PRIMARY KEY,
-    pipeline_name TEXT NOT NULL,
-    started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    completed_at TIMESTAMP WITH TIME ZONE,
-    status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
-    requested_start TIMESTAMP WITH TIME ZONE NOT NULL,
-    requested_end TIMESTAMP WITH TIME ZONE NOT NULL,
-    git_sha TEXT,
-    config_hash TEXT,
-    raw_inventory_uri TEXT,
-    error_message TEXT,
-    CHECK (completed_at IS NULL OR completed_at >= started_at)
-);
-
-CREATE TABLE IF NOT EXISTS operations.pipeline_stage_runs(
-    stage_run_id UUID PRIMARY KEY,
-    run_id UUID NOT NULL REFERENCES operations.pipeline_runs(run_id),
-    stage_name TEXT NOT NULL,
-    started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    completed_at TIMESTAMP WITH TIME ZONE,
-    status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
-    details JSONB NOT NULL DEFAULT '{}'::jsonb,
-    error_message TEXT,
-    UNIQUE(run_id, stage_name),
-    CHECK (completed_at IS NULL OR completed_at >= started_at)
-);
-
-CREATE TABLE IF NOT EXISTS analytics.forecast_results(
-    forecast_id UUID PRIMARY KEY,
-    run_id UUID NOT NULL REFERENCES operations.pipeline_runs(run_id),
-    model_name TEXT NOT NULL,
-    model_version_uri TEXT NOT NULL,
-    data_version_id TEXT NOT NULL,
-    generated_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    target_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-    quantile NUMERIC,
-    predicted_value DOUBLE PRECISION NOT NULL,
-    actual_value DOUBLE PRECISION,
-    published_at TIMESTAMP WITH TIME ZONE,
-    status TEXT NOT NULL CHECK (status IN ('pending', 'published', 'superseded', 'invalid')),
-    UNIQUE(run_id, model_name, target_timestamp, quantile)
-);
-
-CREATE INDEX IF NOT EXISTS forecast_results_published_target_idx
-    ON analytics.forecast_results (target_timestamp, model_name)
-    WHERE status = 'published';
 
 -- SMARD raw tables: resolution column added so hourly and quarter-hourly rows
 -- for the same timestamp coexist (hourly ts aligns with every 4th 15-min ts).
@@ -119,3 +72,56 @@ CREATE TABLE IF NOT EXISTS raw.weather_forecast(
     fetched_at TIMESTAMP WITH TIME ZONE NOT NULL,
     UNIQUE(timestamp, region, signal_type)
 );
+
+
+CREATE TABLE IF NOT EXISTS operations.pipeline_runs(
+    run_id UUID PRIMARY KEY,
+    pipeline_name TEXT NOT NULL,
+    started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE,
+    status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+    requested_start TIMESTAMP WITH TIME ZONE NOT NULL,
+    requested_end TIMESTAMP WITH TIME ZONE NOT NULL,
+    git_sha TEXT,
+    config_hash TEXT,
+    raw_inventory_uri TEXT,
+    error_message TEXT,
+    CHECK (completed_at IS NULL OR completed_at >= started_at)
+);
+
+CREATE TABLE IF NOT EXISTS operations.pipeline_stage_runs(
+    stage_run_id UUID PRIMARY KEY,
+    run_id UUID NOT NULL REFERENCES operations.pipeline_runs(run_id),
+    stage_name TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL DEFAULT 1 CHECK (attempt_number > 0),
+    started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE,
+    status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+    git_sha TEXT,
+    config_hash TEXT,
+    details JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error_message TEXT,
+    UNIQUE(run_id, stage_name, attempt_number),
+    CHECK (completed_at IS NULL OR completed_at >= started_at)
+);
+
+CREATE TABLE IF NOT EXISTS analytics.forecast_results(
+    forecast_id UUID PRIMARY KEY,
+    run_id UUID NOT NULL REFERENCES operations.pipeline_runs(run_id),
+    model_name TEXT NOT NULL,
+    model_version_uri TEXT NOT NULL,
+    data_version_id TEXT NOT NULL,
+    generated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    target_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+    resolution TEXT NOT NULL DEFAULT 'hour',
+    quantile NUMERIC,
+    predicted_value DOUBLE PRECISION NOT NULL,
+    actual_value DOUBLE PRECISION,
+    published_at TIMESTAMP WITH TIME ZONE,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'published', 'superseded', 'invalid')),
+    UNIQUE(run_id, model_name, target_timestamp, resolution, quantile)
+);
+
+CREATE INDEX IF NOT EXISTS forecast_results_published_target_idx
+    ON analytics.forecast_results (target_timestamp, model_name)
+    WHERE status = 'published';
