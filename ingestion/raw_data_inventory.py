@@ -7,8 +7,7 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
-RAW_INVENTORY_LATEST_KEY = "data/raw_inventory/latest.json"
-RAW_INVENTORY_ARCHIVE_PREFIX = "data/raw_inventory/archive"
+from ingestion import RAW_INVENTORY_LATEST_KEY, RAW_INVENTORY_ARCHIVE_PREFIX, RAW_INVENTORY_SCHEMA_VERSION
 
 
 def _get_s3_client():
@@ -74,7 +73,7 @@ def update_raw_data_inventory(uploaded_objects: list[dict[str, Any]]) -> dict[st
     inventory_id = _inventory_id(objects)
     archived_key = f"{RAW_INVENTORY_ARCHIVE_PREFIX}/{inventory_id}.json"
     inventory = {
-        "inventory_version": "1.0",
+        "inventory_version": RAW_INVENTORY_SCHEMA_VERSION,
         "inventory_id": inventory_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "objects": objects,

@@ -39,6 +39,7 @@ from ml.wandb_tracking import (
     start_wandb_run,
     update_wandb_config,
 )
+from ml import ML_REPORT_VERSION
 
 logging.basicConfig(
     level=logging.INFO,
@@ -149,6 +150,7 @@ def _initialize_predictions_store(
 def _initialize_report() -> dict[str, Any]:
     train_start_time = datetime.now(timezone.utc)
     return {
+        "report_version": ML_REPORT_VERSION,
         "run": {
             "name": "two_stage_price_model_training_prediction",
             "started_at": train_start_time.isoformat(),

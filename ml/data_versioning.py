@@ -9,6 +9,8 @@ import pandas as pd
 from ingestion.raw_data_inventory import load_latest_raw_data_inventory
 from utils.git_utils import get_git_sha
 
+from ml import DATA_MANIFEST_VERSION
+
 
 def _json_default(value: Any) -> str:
     if isinstance(value, (pd.Timestamp, datetime)):
@@ -82,7 +84,7 @@ def build_data_manifest(
     data_version_id = hashlib.sha256(canonical_identity).hexdigest()
 
     return {
-        "manifest_version": "1.0",
+        "manifest_version": DATA_MANIFEST_VERSION,
         "data_version_id": data_version_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "git_revision": get_git_sha(),
