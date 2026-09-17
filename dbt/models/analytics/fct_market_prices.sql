@@ -1,9 +1,10 @@
+-- Clean day-ahead prices. Lags and rolling averages have been REMOVED from
+-- this model — they assumed hourly spacing (LAG(value, 24) = 24h) which breaks
+-- at 15-min resolution (24 steps = 6h). All lag/rolling computations now live
+-- in the ML feature engineer (ml/features/feature_engineering.py) where the
+-- resolution is known and the correct step count can be applied.
 SELECT
     timestamp,
-    value AS price_eur_mwh,
-    AVG(value) OVER (ORDER BY timestamp ROWS BETWEEN 167 PRECEDING AND CURRENT ROW) AS price_7d_rolling_avg,
-    LAG(value, 24) OVER (ORDER BY timestamp) AS price_24h_lag,
-    LAG(value, 48) OVER (ORDER BY timestamp) AS price_48h_lag,
-    LAG(value, 168) OVER (ORDER BY timestamp) AS price_168h_lag
-
+    resolution,
+    value AS price_eur_mwh
 FROM {{ ref('stg_smard_prices')}}

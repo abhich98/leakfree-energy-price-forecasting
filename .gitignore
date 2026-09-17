@@ -38,6 +38,9 @@ dbt/.user.yml
 # AWS
 .aws/
 
+# MinIO docker mount
+minio-data/
+
 # Docker override (local tweaks, never committed)
 docker-compose.override.yml
 

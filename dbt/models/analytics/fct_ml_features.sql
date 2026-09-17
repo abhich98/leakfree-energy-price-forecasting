@@ -1,5 +1,8 @@
 SELECT
-    g.timestamp,
+    mp.timestamp,
+    mp.resolution,
+
+    -- Energy generation features
     g.wind_onshore_mw,
     g.wind_offshore_mw,
     g.solar_mw,
@@ -12,13 +15,22 @@ SELECT
     g.nuclear_mw,
     g.other_conventional_mw,
     g.other_renewable_mw,
-    g.total_consumption_mw,
+
     g.residual_load_mw,
-    mp.price_eur_mwh,
-    mp.price_7d_rolling_avg,
-    mp.price_24h_lag,
-    mp.price_48h_lag,
-    mp.price_168h_lag,
+    g.total_consumption_mw,
+    g.total_generation_mw,
+
+    -- Energy generation forecast features
+    gf.wind_onshore_forecast_mw,
+    gf.wind_offshore_forecast_mw,
+    gf.solar_forecast_mw,
+    gf.wind_pv_forecast_mw,
+    gf.total_generation_forecast_mw,
+
+    gf.residual_load_forecast_mw,
+    gf.total_consumption_forecast_mw,
+
+    -- Neighboring market prices and spreads
     ps.de_lu_price_eur_mwh,
     ps.austria_price_eur_mwh,
     ps.austria_spread_eur_mwh,
@@ -36,6 +48,11 @@ SELECT
     ps.denmark_1_spread_eur_mwh,
     ps.denmark_2_price_eur_mwh,
     ps.denmark_2_spread_eur_mwh,
+
+    -- Market energy price
+    mp.price_eur_mwh,
+
+    -- Weather features
     w.wind_speed_100m_brandenburg,
     w.wind_direction_100m_brandenburg,
     w.shortwave_radiation_brandenburg,
@@ -56,6 +73,30 @@ SELECT
     w.shortwave_radiation_bawue,
     w.cloud_cover_bawue,
     w.temperature_2m_bawue,
+
+    -- Weather forecast features
+    wf.wind_speed_100m_brandenburg_forecast,
+    wf.wind_direction_100m_brandenburg_forecast,
+    wf.shortwave_radiation_brandenburg_forecast,
+    wf.cloud_cover_brandenburg_forecast,
+    wf.temperature_2m_brandenburg_forecast,
+    wf.wind_speed_100m_schleswig_forecast,
+    wf.wind_direction_100m_schleswig_forecast,
+    wf.shortwave_radiation_schleswig_forecast,
+    wf.cloud_cover_schleswig_forecast,
+    wf.temperature_2m_schleswig_forecast,
+    wf.wind_speed_100m_bavaria_forecast,
+    wf.wind_direction_100m_bavaria_forecast,
+    wf.shortwave_radiation_bavaria_forecast,
+    wf.cloud_cover_bavaria_forecast,
+    wf.temperature_2m_bavaria_forecast,
+    wf.wind_speed_100m_bawue_forecast,
+    wf.wind_direction_100m_bawue_forecast,
+    wf.shortwave_radiation_bawue_forecast,
+    wf.cloud_cover_bawue_forecast,
+    wf.temperature_2m_bawue_forecast,
+
+    -- Date features
     d.date_day,
     d.year,
     d.quarter,
@@ -69,16 +110,25 @@ SELECT
     d.is_workday
 
 FROM 
-    {{ ref('fct_energy_generation') }} AS g
-        JOIN
     {{ ref('fct_market_prices') }} AS mp
-        ON g.timestamp = mp.timestamp
-        JOIN
+        LEFT JOIN
+    {{ ref('fct_energy_generation') }} AS g
+        ON mp.timestamp = g.timestamp
+        AND mp.resolution = g.resolution
+        LEFT JOIN
+    {{ ref('fct_energy_generation_forecast') }} AS gf
+        ON mp.timestamp = gf.timestamp
+        AND mp.resolution = gf.resolution
+        LEFT JOIN
     {{ ref('fct_price_spreads') }} AS ps
-        ON g.timestamp = ps.timestamp
-        JOIN
-    {{ ref('fct_weather_features') }} AS w
-        ON g.timestamp = w.timestamp
-        JOIN
+        ON mp.timestamp = ps.timestamp
+        AND mp.resolution = ps.resolution
+        LEFT JOIN
+    {{ ref('fct_weather') }} AS w
+        ON mp.timestamp = w.timestamp
+        LEFT JOIN
+    {{ ref('fct_weather_forecast') }} AS wf
+        ON mp.timestamp = wf.timestamp
+        LEFT JOIN
     {{ ref('dim_date') }} AS d
-        ON g.timestamp :: date = d.date_day
+        ON mp.timestamp :: date = d.date_day
