@@ -7,17 +7,7 @@ from typing import Any, cast
 
 import pandas as pd
 from ingestion.raw_data_inventory import load_latest_raw_data_inventory
-
-
-def _git_revision() -> str | None:
-    try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except (OSError, subprocess.CalledProcessError):
-        return None
+from utils.git_utils import get_git_sha
 
 
 def _json_default(value: Any) -> str:
@@ -95,7 +85,7 @@ def build_data_manifest(
         "manifest_version": "1.0",
         "data_version_id": data_version_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "git_revision": _git_revision(),
+        "git_revision": get_git_sha(),
         "metadata": metadata,
         "datasets": dataset_summaries,
         "raw_inventory": raw_inventory_reference,

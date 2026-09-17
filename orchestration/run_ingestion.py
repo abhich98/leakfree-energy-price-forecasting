@@ -16,6 +16,7 @@ Incremental: fetches yesterday's data only.
 import argparse
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, TypeVar
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -23,14 +24,20 @@ from dotenv import load_dotenv
 
 from ingestion.loader import load_range
 from ingestion.raw_data_inventory import update_raw_data_inventory
-from ingestion.s3_uploader import DATA_NAMES, is_already_uploaded, upload_to_s3, create_bucket_if_not_exists
-from ingestion.smard_client import fetch_range, RESOLUTION, SMARD_QUARTER_HOUR_SWITCH_DATE
-from ingestion.weather_client import fetch_historical_weather, fetch_forecast_weather_2
-
+from ingestion.s3_uploader import DATA_NAMES, create_bucket_if_not_exists, is_already_uploaded, upload_to_s3
+from ingestion.smard_client import RESOLUTION, SMARD_QUARTER_HOUR_SWITCH_DATE, fetch_range
+from ingestion.weather_client import fetch_forecast_weather_2, fetch_historical_weather
+from orchestration.run_audit import (
+    finish_pipeline_run,
+    finish_stage_run,
+    start_pipeline_run,
+    start_stage_run,
+)
 
 load_dotenv()  # Load environment variables from .env file
 
 logger = logging.getLogger(__name__)
+StageResult = TypeVar("StageResult")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -42,8 +49,11 @@ logging.basicConfig(
 
 def parser():
     arg_parser = argparse.ArgumentParser(
-        description="Run the data pipeline to fetch SMARD and weather data and upload to S3. The script receives dates in UTC timezone and processes them in UTC."
+        description=(
+            "Run the data pipeline to fetch SMARD and weather data and upload to S3. "
+            "The script receives dates in UTC timezone and processes them in UTC."
         )
+    )
     arg_parser.add_argument("--start_date", 
                             type=str, 
                             help="The start date in YYYY-MM-DD format. Required for full_backfill."
@@ -125,32 +135,34 @@ def _fetch_weather_chunked(start_date: datetime, end_date: datetime) -> pd.DataF
     return pd.concat(frames, ignore_index=True)
 
 
-def run_pipeline(start_date: datetime, end_date: datetime, force_upload: bool):
+def ingest_and_upload(
+    start_date: datetime, end_date: datetime, force_upload: bool = False
+) -> list[dict[str, Any]]:
+    """Fetch source data for a range and upload its raw partitions to S3."""
+    create_bucket_if_not_exists()
+    uploaded_objects: list[dict[str, Any]] = []
 
-    create_bucket_if_not_exists()  # Ensure the S3 bucket exists before uploading
-
-    start_time = datetime.now()
-
-    # ── Fetch the ENTIRE range in one pass ──────────────────────────────
-    # SMARD serves weekly chunks, so fetching 1 day costs the same API calls
-    # as fetching 7 days. Fetching the whole range at once eliminates ~7×
-    # redundant weekly chunk downloads and ~2500× redundant index calls.
-
-    # HOURLY DATA
     logger.info(f"Fetching SMARD data for {start_date.date()} (UTC) → {end_date.date()} (UTC)")
     smard_data = fetch_range(start_date=start_date, end_date=end_date, resolution=RESOLUTION.HOUR)
     logger.info(f"SMARD fetch done: {len(smard_data)} rows")
 
-    # ── Split by day and upload (skipping days already in S3) ───────────
-    uploaded_objects = _split_and_upload_by_day(
+    uploaded_objects.extend(_split_and_upload_by_day(
         smard_data, DATA_NAMES.SMARD, force_upload=force_upload
-    )
+    ))
 
-    # QUARTER-HOURLY DATA (only for dates after the switch date)
+    # QUARTER-HOURLY DATA (only for dates after germany the date switched to quarter-hourly resolution)
     start_date_for_quarter_hour = max(start_date, SMARD_QUARTER_HOUR_SWITCH_DATE)
     if start_date_for_quarter_hour < end_date:
-        logger.info(f"Fetching SMARD quarter-hourly data for {start_date_for_quarter_hour.date()} (UTC) → {end_date.date()} (UTC)")
-        smard_qh_data = fetch_range(start_date=start_date_for_quarter_hour, end_date=end_date, resolution=RESOLUTION.QUARTER_HOUR)
+        logger.info(
+            "Fetching SMARD quarter-hourly data for %s (UTC) -> %s (UTC)",
+            start_date_for_quarter_hour.date(),
+            end_date.date(),
+        )
+        smard_qh_data = fetch_range(
+            start_date=start_date_for_quarter_hour,
+            end_date=end_date,
+            resolution=RESOLUTION.QUARTER_HOUR,
+        )
         logger.info(f"SMARD quarter-hourly fetch done: {len(smard_qh_data)} rows")
 
         uploaded_objects.extend(
@@ -169,9 +181,6 @@ def run_pipeline(start_date: datetime, end_date: datetime, force_upload: bool):
     )
 
     # ── Fetch and upload historical/current weather forecasts (leak-safe) ───────
-    # These are the forecasts that were actually available at auction time,
-    # NOT ERA5 actuals. Used for ML training to avoid the leakage in the
-    # existing fct_ml_features weather join.
     logger.info(f"Fetching weather forecasts for {start_date.date()} → {end_date.date()}")
     weather_forecast_data = fetch_forecast_weather_2(start_date, end_date, run_utc_hour=0)
     logger.info(f"Weather forecast fetch done: {len(weather_forecast_data)} rows")
@@ -182,13 +191,82 @@ def run_pipeline(start_date: datetime, end_date: datetime, force_upload: bool):
         )
     )
 
+    return uploaded_objects
+
+
+def record_raw_inventory(uploaded_objects: list[dict[str, Any]]) -> dict[str, Any]:
+    """Persist an immutable inventory that records the uploaded S3 object versions."""
     inventory = update_raw_data_inventory(uploaded_objects)
     logger.info("Raw data inventory updated: %s", inventory["s3_uri"])
+    return inventory
 
-    # Load raw data from S3 into PostgreSQL
+
+def load_postgres(start_date: datetime, end_date: datetime) -> None:
+    """Load raw S3 partitions for a range into PostgreSQL."""
     load_range(start_date, end_date)
-    end_time = datetime.now()
-    logger.info(f"Pipeline completed in {end_time - start_time}")
+
+
+def _run_stage(
+    run_id,
+    stage_name: str,
+    operation: Callable[[], StageResult],
+    details: Callable[[StageResult], dict[str, Any]],
+) -> StageResult:
+    """Execute one stage and ensure its audit record is finalized on every outcome."""
+    stage_run_id = start_stage_run(run_id, stage_name)
+    try:
+        result = operation()
+    except Exception as exc:
+        finish_stage_run(stage_run_id, "failed", error_message=str(exc))
+        raise
+    finish_stage_run(stage_run_id, "succeeded", details=details(result))
+    return result
+
+
+def run_pipeline(
+    start_date: datetime, end_date: datetime, force_upload: bool = False
+) -> None:
+    """Run the auditable ingestion, inventory, and PostgreSQL-load stages."""
+    start_time = datetime.now(timezone.utc)
+    run_id = start_pipeline_run("ingestion", start_date, end_date)
+    inventory: dict[str, Any] | None = None
+
+    try:
+        uploaded_objects = _run_stage(
+            run_id,
+            "ingest_and_upload",
+            lambda: ingest_and_upload(start_date, end_date, force_upload),
+            lambda objects: {"uploaded_object_count": len(objects)},
+        )
+        inventory = _run_stage(
+            run_id,
+            "record_raw_inventory",
+            lambda: record_raw_inventory(uploaded_objects),
+            lambda result: {
+                "inventory_id": result["inventory_id"],
+                "s3_uri": result["s3_uri"],
+            },
+        )
+        _run_stage(
+            run_id,
+            "load_postgres",
+            lambda: load_postgres(start_date, end_date),
+            lambda _: {
+                "requested_start": start_date.isoformat(),
+                "requested_end": end_date.isoformat(),
+            },
+        )
+    except Exception as exc:
+        finish_pipeline_run(
+            run_id,
+            "failed",
+            raw_inventory_uri=inventory["s3_uri"] if inventory else None,
+            error_message=str(exc),
+        )
+        raise
+
+    finish_pipeline_run(run_id, "succeeded", raw_inventory_uri=inventory["s3_uri"])
+    logger.info("Pipeline run %s completed in %s", run_id, datetime.now(timezone.utc) - start_time)
 
 
 if __name__ == "__main__":
@@ -204,7 +282,11 @@ if __name__ == "__main__":
     elif args.start_date or args.end_date:
         raise ValueError("Provide both --start_date and --end_date or neither.")
     else:
-        start_date = datetime.now(tz=ZoneInfo("UTC")).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+        start_date = (
+            datetime.now(tz=ZoneInfo("UTC"))
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            - timedelta(days=1)
+        )
         end_date = datetime.now(tz=ZoneInfo("UTC"))
 
     run_pipeline(
