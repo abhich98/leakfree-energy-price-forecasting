@@ -3,12 +3,12 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
-import psycopg2
 import pyarrow.dataset as ds
-from psycopg2.extras import execute_values
 from pyarrow.fs import S3FileSystem
+from sqlalchemy import text
+from sqlalchemy.engine import Connection
 
-from db.settings import Settings, get_settings
+from db.database import get_connection
 from ingestion.s3_uploader import DATA_NAMES, get_file_name
 from ingestion.smard_client import (
     CONSUMPTION_TYPE,
@@ -32,28 +32,8 @@ _NEIGHBOUR_SIGNALS = {e.name for e in NEIGHBORING_REGION} - _PRICE_SIGNALS
 _FORECAST_SIGNALS = {e.name for e in FORECAST_SIGNAL}
 
 
-def _get_db_connection():
-    settings: Settings = get_settings()
-
-    if not all(
-        [
-            settings.ZEPHYRWERK_RDS_HOST,
-            settings.ZEPHYRWERK_RDS_USER,
-            settings.ZEPHYRWERK_RDS_PASSWORD,
-            settings.ZEPHYRWERK_RDS_DB,
-        ]
-    ):
-        raise RuntimeError(
-            "Missing one or more required ZEPHYRWERK_RDS_* environment variables"
-        )
-
-    return psycopg2.connect(
-        host=settings.ZEPHYRWERK_RDS_HOST,
-        port=settings.ZEPHYRWERK_RDS_PORT,
-        user=settings.ZEPHYRWERK_RDS_USER,
-        password=settings.ZEPHYRWERK_RDS_PASSWORD,
-        dbname=settings.ZEPHYRWERK_RDS_DB,
-    )
+def _get_db_connection() -> Connection:
+    return get_connection()
 
 
 def _get_filesystem():
@@ -119,7 +99,15 @@ def _get_dataframe(
     return df
 
 
-def _load_smard_day(conn, fs, date: datetime) -> None:
+def _execute_many(
+    conn: Connection, statement: str, columns: list[str], rows: list[tuple]
+) -> None:
+    parameters = [dict(zip(columns, row)) for row in rows]
+    with conn.begin():
+        conn.execute(text(statement), parameters)
+
+
+def _load_smard_day(conn: Connection, fs, date: datetime) -> None:
     # SMARD data is partitioned by resolution; try both hour and quarter-hour for the date.
     dfs = []
     for res in [RESOLUTION.HOUR.value, RESOLUTION.QUARTER_HOUR.value]:
@@ -146,27 +134,23 @@ def _load_smard_day(conn, fs, date: datetime) -> None:
             continue
 
         cols = ["timestamp", "signal", "value", "unit", "resolution"]
-
         rows = list(table_df[cols].itertuples(index=False, name=None))
-
         insert_sql = (
-            f"INSERT INTO raw.{table_name} ({', '.join(cols)}) VALUES %s "
+            f"INSERT INTO raw.{table_name} ({', '.join(cols)}) "
+            f"VALUES ({', '.join(f':{col}' for col in cols)}) "
             "ON CONFLICT (timestamp, signal, resolution) "
             "DO UPDATE SET value = EXCLUDED.value, unit = EXCLUDED.unit"
         )
 
-        with conn.cursor() as cur:
-            try:
-                execute_values(cur, insert_sql, rows)
-                conn.commit()
-                logger.info(
-                    f"Inserted {len(rows)} SMARD rows for {date.date()} into {table_name}"
-                )
-            except Exception:
-                conn.rollback()
-                logger.exception(
-                    f"Failed to insert SMARD rows for {date.date()} into {table_name}"
-                )
+        try:
+            _execute_many(conn, insert_sql, cols, rows)
+            logger.info(
+                f"Inserted {len(rows)} SMARD rows for {date.date()} into {table_name}"
+            )
+        except Exception:
+            logger.exception(
+                f"Failed to insert SMARD rows for {date.date()} into {table_name}"
+            )
 
     if not forecast_df.empty:
         forecast_cols = [
@@ -178,12 +162,12 @@ def _load_smard_day(conn, fs, date: datetime) -> None:
             "resolution",
             "fetched_at",
         ]
-
         forecast_rows = list(
             forecast_df[forecast_cols].itertuples(index=False, name=None)
         )
         forecast_insert_sql = (
-            f"INSERT INTO raw.smard_forecast ({', '.join(forecast_cols)}) VALUES %s "
+            f"INSERT INTO raw.smard_forecast ({', '.join(forecast_cols)}) "
+            f"VALUES ({', '.join(f':{col}' for col in forecast_cols)}) "
             "ON CONFLICT (timestamp, signal, resolution) "
             "DO UPDATE SET "
             "issue_timestamp = EXCLUDED.issue_timestamp, "
@@ -192,21 +176,18 @@ def _load_smard_day(conn, fs, date: datetime) -> None:
             "fetched_at = EXCLUDED.fetched_at"
         )
 
-        with conn.cursor() as cur:
-            try:
-                execute_values(cur, forecast_insert_sql, forecast_rows)
-                conn.commit()
-                logger.info(
-                    f"Inserted {len(forecast_rows)} SMARD forecast rows for {date.date()} into smard_forecast"
-                )
-            except Exception:
-                conn.rollback()
-                logger.exception(
-                    f"Failed to insert SMARD forecast rows for {date.date()} into smard_forecast"
-                )
+        try:
+            _execute_many(conn, forecast_insert_sql, forecast_cols, forecast_rows)
+            logger.info(
+                f"Inserted {len(forecast_rows)} SMARD forecast rows for {date.date()} into smard_forecast"
+            )
+        except Exception:
+            logger.exception(
+                f"Failed to insert SMARD forecast rows for {date.date()} into smard_forecast"
+            )
 
 
-def _load_weather_day(conn, fs, date: datetime) -> None:
+def _load_weather_day(conn: Connection, fs, date: datetime) -> None:
     df = _get_dataframe(fs, DATA_NAMES.WEATHER, date)
     if df is None or df.empty:
         return
@@ -217,22 +198,21 @@ def _load_weather_day(conn, fs, date: datetime) -> None:
             index=False, name=None
         )
     )
+    insert_sql = (
+        f"INSERT INTO raw.weather ({', '.join(cols)}) "
+        f"VALUES ({', '.join(f':{col}' for col in cols)}) "
+        "ON CONFLICT (timestamp, region, signal_type) "
+        "DO UPDATE SET value = EXCLUDED.value, unit = EXCLUDED.unit"
+    )
 
-    insert_sql = f"INSERT INTO raw.weather ({', '.join(cols)}) VALUES %s \
-            ON CONFLICT (timestamp, region, signal_type) \
-            DO UPDATE SET value = EXCLUDED.value, unit = EXCLUDED.unit"
-
-    with conn.cursor() as cur:
-        try:
-            execute_values(cur, insert_sql, rows)
-            conn.commit()
-            logger.info(f"Inserted {len(rows)} WEATHER rows for {date.date()}")
-        except Exception:
-            conn.rollback()
-            logger.exception(f"Failed to insert WEATHER rows for {date.date()}")
+    try:
+        _execute_many(conn, insert_sql, cols, rows)
+        logger.info(f"Inserted {len(rows)} WEATHER rows for {date.date()}")
+    except Exception:
+        logger.exception(f"Failed to insert WEATHER rows for {date.date()}")
 
 
-def _load_weather_forecast_day(conn, fs, date: datetime) -> None:
+def _load_weather_forecast_day(conn: Connection, fs, date: datetime) -> None:
     df = _get_dataframe(fs, DATA_NAMES.WEATHER_FORECAST, date)
     if df is None or df.empty:
         return
@@ -248,25 +228,23 @@ def _load_weather_forecast_day(conn, fs, date: datetime) -> None:
         "fetched_at",
     ]
     rows = list(df[cols].itertuples(index=False, name=None))
+    insert_sql = (
+        f"INSERT INTO raw.weather_forecast ({','.join(cols)}) "
+        f"VALUES ({', '.join(f':{col}' for col in cols)}) "
+        "ON CONFLICT (timestamp, region, signal_type) "
+        "DO UPDATE SET "
+        "issue_timestamp = EXCLUDED.issue_timestamp, "
+        "value = EXCLUDED.value, unit = EXCLUDED.unit, "
+        "model = EXCLUDED.model, fetched_at = EXCLUDED.fetched_at"
+    )
 
-    insert_sql = f"INSERT INTO raw.weather_forecast ({','.join(cols)}) VALUES %s \
-            ON CONFLICT (timestamp, region, signal_type) \
-            DO UPDATE SET \
-            issue_timestamp = EXCLUDED.issue_timestamp, \
-            value = EXCLUDED.value, unit = EXCLUDED.unit, \
-            model = EXCLUDED.model, \
-            fetched_at = EXCLUDED.fetched_at"
-
-    with conn.cursor() as cur:
-        try:
-            execute_values(cur, insert_sql, rows)
-            conn.commit()
-            logger.info(
-                f"Inserted {len(rows)} WEATHER FORECAST rows for {date.date()}."
-            )
-        except Exception:
-            conn.rollback()
-            logger.exception(f"Failed to insert WEATHER rows for {date.date()}")
+    try:
+        _execute_many(conn, insert_sql, cols, rows)
+        logger.info(
+            f"Inserted {len(rows)} WEATHER FORECAST rows for {date.date()}."
+        )
+    except Exception:
+        logger.exception(f"Failed to insert WEATHER rows for {date.date()}")
 
 
 def load_from_s3_to_db(date: datetime) -> None:
