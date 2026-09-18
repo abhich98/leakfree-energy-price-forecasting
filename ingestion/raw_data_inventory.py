@@ -9,19 +9,7 @@ from botocore.exceptions import ClientError
 
 from ingestion import RAW_INVENTORY_LATEST_KEY, RAW_INVENTORY_ARCHIVE_PREFIX, RAW_INVENTORY_SCHEMA_VERSION
 
-
-def _get_s3_client():
-    return boto3.client(
-        "s3",
-        endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None,
-    )
-
-
-def _get_bucket_name() -> str:
-    bucket = os.environ.get("ZEPHYRWERK_AWS_BUCKET_NAME")
-    if not bucket:
-        raise ValueError("ZEPHYRWERK_AWS_BUCKET_NAME environment variable is not set.")
-    return bucket
+from utils.s3 import get_s3_client, get_bucket_name
 
 
 def _load_latest_inventory(s3, bucket: str) -> dict[str, Any]:
@@ -58,8 +46,8 @@ def _inventory_existing_raw_objects(s3, bucket: str) -> dict[str, dict[str, Any]
 
 def update_raw_data_inventory(uploaded_objects: list[dict[str, Any]]) -> dict[str, Any]:
     """Merge uploaded raw object versions into a new immutable inventory snapshot."""
-    bucket = _get_bucket_name()
-    s3 = _get_s3_client()
+    bucket = get_bucket_name()
+    s3 = get_s3_client()
     latest_inventory = _load_latest_inventory(s3, bucket)
     objects = latest_inventory.get("objects", {}).copy()
     if not latest_inventory.get("inventory_id"):
@@ -98,8 +86,8 @@ def update_raw_data_inventory(uploaded_objects: list[dict[str, Any]]) -> dict[st
 
 def load_latest_raw_data_inventory() -> dict[str, Any]:
     """Load the latest raw object inventory and return its immutable archive URI."""
-    bucket = _get_bucket_name()
-    inventory = _load_latest_inventory(_get_s3_client(), bucket)
+    bucket = get_bucket_name()
+    inventory = _load_latest_inventory(get_s3_client(), bucket)
     inventory_id = inventory.get("inventory_id")
     if not inventory_id:
         raise RuntimeError("No raw data inventory exists. Run ingestion before training.")

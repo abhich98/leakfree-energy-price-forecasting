@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS raw.weather_forecast(
 CREATE TABLE IF NOT EXISTS operations.pipeline_runs(
     run_id UUID PRIMARY KEY,
     pipeline_name TEXT NOT NULL,
+    source_elt_run_id UUID REFERENCES operations.pipeline_runs(run_id),
     started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMP WITH TIME ZONE,
     status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
@@ -121,6 +122,11 @@ CREATE TABLE IF NOT EXISTS analytics.forecast_results(
     status TEXT NOT NULL CHECK (status IN ('pending', 'published', 'superseded', 'invalid')),
     UNIQUE(run_id, model_name, target_timestamp, resolution, quantile)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS forecast_results_run_model_target_resolution_quantile_idx
+    ON analytics.forecast_results (
+        run_id, model_name, target_timestamp, resolution, COALESCE(quantile, -1)
+    );
 
 CREATE INDEX IF NOT EXISTS forecast_results_published_target_idx
     ON analytics.forecast_results (target_timestamp, model_name)

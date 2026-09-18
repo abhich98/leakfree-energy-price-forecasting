@@ -8,19 +8,8 @@ from uuid import UUID, uuid4
 import psycopg2
 from psycopg2.extras import Json
 
-from db.settings import get_settings
-from utils.git_utils import get_git_sha
-
-
-def _get_connection():
-    settings = get_settings()
-    return psycopg2.connect(
-        host=settings.ZEPHYRWERK_RDS_HOST,
-        port=settings.ZEPHYRWERK_RDS_PORT,
-        user=settings.ZEPHYRWERK_RDS_USER,
-        password=settings.ZEPHYRWERK_RDS_PASSWORD,
-        dbname=settings.ZEPHYRWERK_RDS_DB,
-    )
+from utils.git import get_git_sha
+from utils.rds import get_connection
 
 
 def start_pipeline_run(
@@ -28,17 +17,26 @@ def start_pipeline_run(
     requested_start: datetime,
     requested_end: datetime,
     config_hash: str | None = None,
+    source_elt_run_id: UUID | None = None,
 ) -> UUID:
     """Create and return a running pipeline audit record."""
     run_id = uuid4()
-    with _get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor() as cursor:
         cursor.execute(
             """
             INSERT INTO operations.pipeline_runs (
-                run_id, pipeline_name, status, requested_start, requested_end, git_sha, config_hash
-            ) VALUES (%s, %s, 'running', %s, %s, %s, %s)
+                run_id, pipeline_name, source_elt_run_id, status, requested_start, requested_end, git_sha, config_hash
+            ) VALUES (%s, %s, %s, 'running', %s, %s, %s, %s)
             """,
-            (run_id, pipeline_name, requested_start, requested_end, get_git_sha(), config_hash),
+            (
+                run_id,
+                pipeline_name,
+                source_elt_run_id,
+                requested_start,
+                requested_end,
+                get_git_sha(),
+                config_hash,
+            ),
         )
     return run_id
 
@@ -50,7 +48,7 @@ def finish_pipeline_run(
     error_message: str | None = None,
 ) -> None:
     """Mark a pipeline run as succeeded or failed."""
-    with _get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor() as cursor:
         cursor.execute(
             """
             UPDATE operations.pipeline_runs
@@ -63,10 +61,10 @@ def finish_pipeline_run(
 
 def get_pipeline_run(run_id: UUID) -> dict[str, Any]:
     """Return an existing pipeline run or raise when the ID is unknown."""
-    with _get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor() as cursor:
         cursor.execute(
             """
-            SELECT pipeline_name, requested_start, requested_end, raw_inventory_uri
+            SELECT pipeline_name, status, requested_start, requested_end, raw_inventory_uri, source_elt_run_id
             FROM operations.pipeline_runs
             WHERE run_id = %s
             """,
@@ -77,15 +75,17 @@ def get_pipeline_run(run_id: UUID) -> dict[str, Any]:
         raise ValueError(f"Pipeline run {run_id} does not exist.")
     return {
         "pipeline_name": row[0],
-        "requested_start": row[1],
-        "requested_end": row[2],
-        "raw_inventory_uri": row[3],
+        "status": row[1],
+        "requested_start": row[2],
+        "requested_end": row[3],
+        "raw_inventory_uri": row[4],
+        "source_elt_run_id": row[5],
     }
 
 
 def get_latest_stage_status(run_id: UUID, stage_name: str) -> str | None:
     """Return the latest recorded status for a stage in a pipeline run."""
-    with _get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor() as cursor:
         cursor.execute(
             """
             SELECT status
@@ -102,7 +102,7 @@ def get_latest_stage_status(run_id: UUID, stage_name: str) -> str | None:
 
 def get_latest_stage_details(run_id: UUID, stage_name: str) -> dict[str, Any] | None:
     """Return the details stored for the latest attempt of a stage."""
-    with _get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor() as cursor:
         cursor.execute(
             """
             SELECT details
@@ -119,7 +119,7 @@ def get_latest_stage_details(run_id: UUID, stage_name: str) -> dict[str, Any] | 
 
 def reopen_pipeline_run(run_id: UUID) -> None:
     """Mark an existing run as active while an individual stage is retried."""
-    with _get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor() as cursor:
         cursor.execute(
             """
             UPDATE operations.pipeline_runs
@@ -133,7 +133,7 @@ def reopen_pipeline_run(run_id: UUID) -> None:
 def start_stage_run(run_id: UUID, stage_name: str, config_hash: str | None = None) -> UUID:
     """Create a running audit record for one retryable pipeline stage."""
     stage_run_id = uuid4()
-    with _get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor() as cursor:
         cursor.execute(
             """
             INSERT INTO operations.pipeline_stage_runs (
@@ -155,7 +155,7 @@ def finish_stage_run(
     error_message: str | None = None,
 ) -> None:
     """Mark a stage as succeeded or failed and persist JSON-serializable details."""
-    with _get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor() as cursor:
         cursor.execute(
             """
             UPDATE operations.pipeline_stage_runs
