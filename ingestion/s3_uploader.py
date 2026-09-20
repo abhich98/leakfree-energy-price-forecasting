@@ -8,7 +8,6 @@ import boto3
 import pandas as pd
 from botocore.exceptions import NoCredentialsError
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

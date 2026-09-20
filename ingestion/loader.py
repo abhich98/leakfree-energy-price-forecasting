@@ -18,9 +18,7 @@ from ingestion.smard_client import (
     RESOLUTION,
 )
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+
 logger = logging.getLogger(__name__)
 
 # --- routing: signal name -> table name ---

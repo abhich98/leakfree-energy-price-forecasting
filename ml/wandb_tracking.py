@@ -2,7 +2,7 @@ from typing import Any
 
 import wandb
 
-from utils.git_utils import get_git_metadata
+from utils.git import get_git_metadata
 
 
 def start_wandb_run(run_name: str, group: str | None = None) -> Any:

@@ -17,6 +17,7 @@ import argparse
 import logging
 import sys
 import os
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
@@ -46,13 +47,15 @@ from orchestration.run_audit import (
 
 load_dotenv()  # Load environment variables from .env file
 
+PIPELINE_LOG_PATH = Path(__file__).resolve().parents[1] / "logs" / "pipeline.log"
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(),                    # still prints to terminal
-        logging.FileHandler("pipeline.log"),        # also writes to file
+        logging.FileHandler(PIPELINE_LOG_PATH, encoding="utf-8"),        # also writes to file
     ]
 )
 
