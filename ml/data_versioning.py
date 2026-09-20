@@ -1,15 +1,14 @@
 import hashlib
 import json
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
-from ingestion.raw_data_inventory import load_latest_raw_data_inventory
-from utils.git_utils import get_git_sha
 
+from ingestion.raw_data_inventory import load_latest_raw_data_inventory
 from ml import DATA_MANIFEST_VERSION
+from utils.git import get_git_sha
 
 
 def _json_default(value: Any) -> str:

@@ -32,10 +32,6 @@ _NEIGHBOUR_SIGNALS = {e.name for e in NEIGHBORING_REGION} - _PRICE_SIGNALS
 _FORECAST_SIGNALS = {e.name for e in FORECAST_SIGNAL}
 
 
-def _get_db_connection() -> Connection:
-    return get_connection()
-
-
 def _get_filesystem():
     endpoint = os.environ.get("AWS_ENDPOINT_URL")
 
@@ -249,7 +245,7 @@ def _load_weather_forecast_day(conn: Connection, fs, date: datetime) -> None:
 
 def load_from_s3_to_db(date: datetime) -> None:
     fs = _get_filesystem()
-    conn = _get_db_connection()
+    conn = get_connection()
 
     try:
         _load_smard_day(conn, fs, date)
