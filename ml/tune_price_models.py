@@ -169,10 +169,10 @@ def tune_two_stage_price_models(
 
     # Preprocess the raw data by filling short gaps and dropping incomplete days
     hourly_df = drop_incomplete_days(
-        fill_short_feature_gaps(hourly_raw, omit_columns=["price_eur_mwh"])
+        fill_short_feature_gaps(hourly_raw, omit_columns=[TARGET_COLUMNS[ModelType.PRICE_HOURLY]])
     )
     qh_df = drop_incomplete_days(
-        fill_short_feature_gaps(qh_raw, omit_columns=["price_eur_mwh"])
+        fill_short_feature_gaps(qh_raw, omit_columns=[TARGET_COLUMNS[ModelType.PRICE_QUARTER_HOURLY]])
     )
 
     # Save the training data manifest locally and to S3
@@ -309,7 +309,7 @@ def tune_two_stage_price_models(
     prediction_hourly_holdout = pd.Series(
         final_hourly_pipeline.predict(X_hourly_holdout),
         index=X_hourly_holdout.index,
-        name="price_eur_mwh_prediction",
+        name=f"{TARGET_COLUMNS[ModelType.PRICE_HOURLY]}_prediction",
     )
     baseline_hourly_holdout = X_hourly_holdout[
         BASELINE_PRED_COLUMNS[ModelType.PRICE_HOURLY]
@@ -355,7 +355,7 @@ def tune_two_stage_price_models(
     prediction_qh_holdout = pd.Series(
         prediction_hourly_holdout.to_numpy() + final_qh_pipeline.predict(X_qh_holdout),
         index=y_qh_holdout_price.index,
-        name="price_eur_mwh_prediction",
+        name=f"{TARGET_COLUMNS[ModelType.PRICE_QUARTER_HOURLY]}_prediction",
     )
     baseline_qh_holdout = qh_holdout_with_stage1[
         BASELINE_PRED_COLUMNS[ModelType.PRICE_QUARTER_HOURLY]

@@ -213,12 +213,12 @@ def run_two_stage_price_model_training_prediction(
     )
     hourly_df = drop_incomplete_days(
         fill_short_feature_gaps(
-            hourly_raw, omit_columns=["price_eur_mwh"], verbose=True
+            hourly_raw, omit_columns=[TARGET_COLUMNS[stage1_hourly_model_type]], verbose=True
         )
     )
     qh_df = drop_incomplete_days(
         fill_short_feature_gaps(
-            quarter_hourly_raw, omit_columns=["price_eur_mwh"], verbose=True
+            quarter_hourly_raw, omit_columns=[TARGET_COLUMNS[stage2_qh_model_type]], verbose=True
         )
     )
 
@@ -349,7 +349,7 @@ def run_two_stage_price_model_training_prediction(
         reconstructed_price = pd.Series(
             hourly_window_prediction.to_numpy() + qh_pipeline.predict(X_qh_window),
             index=price_qh_actual.index,
-            name="price_eur_mwh_prediction",
+            name=f"{TARGET_COLUMNS[stage2_qh_model_type]}_prediction",
         )
 
         predictions_dict[stage2_qh_model_type.value]["predictions"].append(
