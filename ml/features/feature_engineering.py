@@ -74,6 +74,22 @@ def drop_incomplete_days(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[keep].copy()
 
 
+def drop_incomplete_rows(
+    df: pd.DataFrame, required_columns: list[str] | None = None
+) -> pd.DataFrame:
+    """Remove rows with unresolved nulls in the columns required by a model."""
+    columns = required_columns or list(df.columns)
+    unknown_columns = set(columns) - set(df.columns)
+    if unknown_columns:
+        raise KeyError(f"required columns are missing from DataFrame: {sorted(unknown_columns)}")
+
+    complete_rows = df.loc[:, columns].notna().all(axis=1)
+    dropped_rows = int((~complete_rows).sum())
+    if dropped_rows:
+        logger.info("Dropping %d rows with unresolved required values", dropped_rows)
+    return df.loc[complete_rows].copy()
+
+
 # ---- sklearn transformers ----
 
 

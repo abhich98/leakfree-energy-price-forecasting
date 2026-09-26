@@ -93,7 +93,7 @@ def build_data_manifest(
     }
 
 
-def save_local_manifest(
+def save_local_data_manifest(
     manifest: dict[str, Any], directory: str = "ml/artifacts"
 ) -> str:
     """Save both an immutable local manifest and a convenience latest copy."""

@@ -14,8 +14,8 @@ from ml.data_access import (
     load_hourly_price_model_features,
     load_quarter_hourly_price_model_features,
 )
-from ml.training_utils import broadcast_predictions_h2qh, ModelType
-from ml.features.feature_engineering import TARGET_COLUMNS
+from ml.training_utils import ModelType
+from ml.two_stage_price import TwoStagePriceModel, prepare_price_features
 from utils.s3 import get_bucket_name, get_s3_client
 
 DEFAULT_PRODUCTION_POINTER_URI = "s3://{bucket}/models/price/production.json"
@@ -90,39 +90,40 @@ def load_pipeline_from_uri(uri: str):
         return joblib.load(local_path)
 
 
-def _features_for_prediction(dataframe: pd.DataFrame,
-                             target_columns: list[str]) -> pd.DataFrame:
-    return dataframe.drop(columns=target_columns, errors="ignore")
+def _select_requested_window(
+    dataframe: pd.DataFrame, start_date: str, end_date_exclusive: str
+) -> pd.DataFrame:
+    start = pd.Timestamp(start_date)
+    end = pd.Timestamp(end_date_exclusive)
+    return dataframe.loc[(dataframe.index >= start) & (dataframe.index < end)].copy()
 
 
 def predict_two_stage_prices(
     start_date: str, end_date_exclusive: str, bundle: dict[str, Any]
 ) -> pd.DataFrame:
     """Predict point prices for a local delivery window using production model artifacts."""
-    hourly = load_hourly_price_model_features(start_date, end_date_exclusive)
-    quarter_hourly = load_quarter_hourly_price_model_features(start_date, end_date_exclusive)
-    hourly_pipeline = load_pipeline_from_uri(bundle["hourly_model_uri"])
-    quarter_hourly_pipeline = load_pipeline_from_uri(bundle["quarter_hourly_model_uri"])
-
-    hourly_prediction = pd.Series(
-        hourly_pipeline.predict(_features_for_prediction(
-            hourly, 
-            [TARGET_COLUMNS[ModelType.PRICE_HOURLY]])
-            ),
-        index=hourly.index,
-        name="predicted_value",
+    warmup_start = (pd.Timestamp(start_date) - pd.Timedelta(days=1)).date().isoformat()
+    hourly = load_hourly_price_model_features(warmup_start, end_date_exclusive)
+    quarter_hourly = load_quarter_hourly_price_model_features(
+        warmup_start, end_date_exclusive
     )
-    qh_features = _features_for_prediction(
-        quarter_hourly, 
-        [TARGET_COLUMNS[ModelType.PRICE_QUARTER_HOURLY]]
-        )
-    hourly_for_qh = broadcast_predictions_h2qh(pd.DatetimeIndex(qh_features.index), hourly_prediction)
-    qh_features = qh_features.drop(columns=["hourly_prediction"])
-    qh_prediction = pd.Series(
-        hourly_for_qh.to_numpy() + quarter_hourly_pipeline.predict(qh_features),
-        index=quarter_hourly.index,
-        name="predicted_value",
+    hourly = _select_requested_window(
+        prepare_price_features(hourly, ModelType.PRICE_HOURLY, require_target=False),
+        start_date,
+        end_date_exclusive,
     )
+    quarter_hourly = _select_requested_window(
+        prepare_price_features(
+            quarter_hourly, ModelType.PRICE_QUARTER_HOURLY, require_target=False
+        ),
+        start_date,
+        end_date_exclusive,
+    )
+    model = TwoStagePriceModel(
+        load_pipeline_from_uri(bundle["hourly_model_uri"]),
+        load_pipeline_from_uri(bundle["quarter_hourly_model_uri"]),
+    )
+    predictions = model.predict(hourly, quarter_hourly)
 
     def as_rows(features: pd.DataFrame, predictions: pd.Series, resolution: str) -> pd.DataFrame:
         timestamps = features["timestamp"] if "timestamp" in features else features.index
@@ -135,6 +136,9 @@ def predict_two_stage_prices(
         )
 
     return pd.concat(
-        [as_rows(hourly, hourly_prediction, "hour"), as_rows(quarter_hourly, qh_prediction, "quarter_hour")],
+        [
+            as_rows(hourly, predictions.hourly, "hour"),
+            as_rows(quarter_hourly, predictions.quarter_hourly, "quarter_hour"),
+        ],
         ignore_index=True,
     )

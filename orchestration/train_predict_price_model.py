@@ -13,7 +13,7 @@ from ml.data_access import (
 )
 from ml.data_versioning import (
     build_data_manifest,
-    save_local_manifest,
+    save_local_data_manifest,
 )
 from ml.features.feature_engineering import (
     BASELINE_PRED_COLUMNS,
@@ -227,7 +227,7 @@ def run_two_stage_price_model_training_prediction(
         {"hourly": hourly_df, "quarter_hourly": qh_df},
         report=report,
     )
-    data_manifest_local_path = save_local_manifest(data_manifest)
+    data_manifest_local_path = save_local_data_manifest(data_manifest)
     data_manifest_s3_uri = save_data_manifest(data_manifest)
 
     report["data"]["data_version_id"] = data_manifest["data_version_id"]

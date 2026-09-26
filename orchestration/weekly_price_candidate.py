@@ -13,13 +13,12 @@ from ml.data_access import (
     load_hourly_price_model_features,
     load_quarter_hourly_price_model_features,
 )
-from ml.data_versioning import build_data_manifest, save_local_manifest
+from ml.data_versioning import build_data_manifest, save_local_data_manifest
 from ml.features.feature_engineering import (
     BASELINE_PRED_COLUMNS,
     TARGET_COLUMNS,
     HourlyPriceModelFeatureEngineer,
     QuarterHourPriceModelFeatureEngineer,
-    drop_incomplete_days,
     split_x_y,
 )
 from ml.price_inference import (
@@ -33,9 +32,9 @@ from ml.training_utils import (
     ModelType,
     broadcast_predictions_h2qh,
     create_price_pipeline,
-    fill_short_feature_gaps,
     save_report,
 )
+from ml.two_stage_price import TwoStagePriceModel, prepare_price_features
 
 EVALUATION_DAYS = 28
 HOURLY_TRAINING_YEARS = 2
@@ -82,11 +81,8 @@ def _load_hyperparameters(model_name: str) -> dict | None:
         return None
 
 
-def _prepare_features(dataframe: pd.DataFrame,
-                      omit_columns: list[str]) -> pd.DataFrame:
-    return drop_incomplete_days(
-        fill_short_feature_gaps(dataframe, omit_columns=omit_columns)
-    )
+def _prepare_features(dataframe: pd.DataFrame, model_type: ModelType) -> pd.DataFrame:
+    return prepare_price_features(dataframe, model_type, require_target=True)
 
 
 def _slice(dataframe: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
@@ -179,16 +175,9 @@ def _fit_candidate(
     qh_pipeline = create_price_pipeline(QuarterHourPriceModelFeatureEngineer, qh_params)
     qh_pipeline.fit(X_qh_train, y_qh_train - stage1_qh_train)
 
-    X_qh_evaluation, _ = split_x_y(qh_evaluation, ModelType.PRICE_QUARTER_HOURLY)
-    stage1_qh_evaluation = broadcast_predictions_h2qh(
-        pd.DatetimeIndex(X_qh_evaluation.index), hourly_predictions
-    )
-    if stage1_qh_evaluation.isna().any():
-        raise ValueError("Stage 1 predictions do not cover every quarter-hour evaluation row")
-    qh_predictions = pd.Series(
-        stage1_qh_evaluation.to_numpy() + qh_pipeline.predict(X_qh_evaluation),
-        index=X_qh_evaluation.index,
-        name="predicted_value",
+    candidate_model = TwoStagePriceModel(hourly_pipeline, qh_pipeline)
+    qh_predictions = candidate_model.predict_quarter_hourly(
+        qh_evaluation, hourly_predictions
     )
     return hourly_pipeline, qh_pipeline, {
         "hourly_predictions": hourly_predictions,
@@ -203,20 +192,11 @@ def _fit_candidate(
 def _champion_predictions(
     bundle: dict[str, Any], hourly: pd.DataFrame, quarter_hourly: pd.DataFrame
 ) -> tuple[pd.Series, pd.Series]:
-    hourly_pipeline = load_pipeline_from_uri(bundle["hourly_model_uri"])
-    qh_pipeline = load_pipeline_from_uri(bundle["quarter_hourly_model_uri"])
-    X_hourly, _ = split_x_y(hourly, ModelType.PRICE_HOURLY)
-    hourly_predictions = pd.Series(
-        hourly_pipeline.predict(X_hourly), index=X_hourly.index, name="champion_hourly"
-    )
-    X_qh, _ = split_x_y(quarter_hourly, ModelType.PRICE_QUARTER_HOURLY)
-    stage1_qh = broadcast_predictions_h2qh(pd.DatetimeIndex(X_qh.index), hourly_predictions)
-    qh_predictions = pd.Series(
-        stage1_qh.to_numpy() + qh_pipeline.predict(X_qh),
-        index=X_qh.index,
-        name="champion_quarter_hourly",
-    )
-    return hourly_predictions, qh_predictions
+    champion = TwoStagePriceModel(
+        load_pipeline_from_uri(bundle["hourly_model_uri"]),
+        load_pipeline_from_uri(bundle["quarter_hourly_model_uri"]),
+    ).predict(hourly, quarter_hourly)
+    return champion.hourly, champion.quarter_hourly
 
 
 def _load_champion() -> dict[str, Any] | None:
@@ -240,8 +220,8 @@ def run_weekly_price_candidate(as_of_date: str) -> dict[str, Any]:
         end_date_exclusive=windows.evaluation_end_exclusive.isoformat(),
         filter_by_local_timestamp=True,
     )
-    hourly = _prepare_features(hourly_raw, omit_columns=[TARGET_COLUMNS[ModelType.PRICE_HOURLY]])
-    quarter_hourly = _prepare_features(qh_raw, omit_columns=[TARGET_COLUMNS[ModelType.PRICE_QUARTER_HOURLY]])
+    hourly = _prepare_features(hourly_raw, ModelType.PRICE_HOURLY)
+    quarter_hourly = _prepare_features(qh_raw, ModelType.PRICE_QUARTER_HOURLY)
     hourly_params = _load_hyperparameters("stage1_price_hourly_forecast")
     qh_params = _load_hyperparameters("stage2_price_quarter_hourly_forecast")
     hourly_pipeline, qh_pipeline, evaluation = _fit_candidate(
@@ -284,7 +264,7 @@ def run_weekly_price_candidate(as_of_date: str) -> dict[str, Any]:
     }
     manifest = build_data_manifest({"hourly": hourly, "quarter_hourly": quarter_hourly}, report)
     report["data_version_id"] = manifest["data_version_id"]
-    report["data_manifest_local_path"] = save_local_manifest(manifest)
+    report["data_manifest_local_path"] = save_local_data_manifest(manifest)
     report["data_manifest_s3_uri"] = save_data_manifest(manifest)
 
     model_version = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
