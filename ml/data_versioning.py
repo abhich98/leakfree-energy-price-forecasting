@@ -8,6 +8,7 @@ import pandas as pd
 
 from ingestion.raw_data_inventory import load_latest_raw_data_inventory
 from ml import DATA_MANIFEST_VERSION
+from ml.reporting import StandardReport
 from utils.git import get_git_sha
 
 
@@ -43,7 +44,7 @@ def _dataframe_fingerprint(dataframe: pd.DataFrame) -> tuple[str, dict[str, Any]
 
 def build_data_manifest(
     datasets: dict[str, pd.DataFrame],
-    report: dict[str, Any] | None = None,
+    report: StandardReport | None = None,
 ) -> dict[str, Any]:
     """Build a deterministic manifest for the exact prepared training datasets."""
 
@@ -55,8 +56,8 @@ def build_data_manifest(
 
     if report:
         metadata = {
-            "workflow": report["run"]["name"],
-            "data": report["data"],
+            "workflow": report.run["name"],
+            "data": report.data,
         }
     else:
         metadata = {}

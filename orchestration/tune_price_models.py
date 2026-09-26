@@ -7,6 +7,7 @@ from typing import Any
 import optuna
 import pandas as pd
 
+from ml import ML_REPORT_VERSION
 from ml.data_access import (
     load_hourly_price_model_features,
     load_quarter_hourly_price_model_features,
@@ -22,6 +23,7 @@ from ml.features.feature_engineering import (
     split_x_y,
     temporal_split,
 )
+from ml.reporting import StandardReport
 from ml.s3_model_io import save_best_hyperparameters, save_data_manifest, save_pipeline
 from ml.training_utils import (
     ModelType,
@@ -44,7 +46,6 @@ from ml.wandb_tracking import (
     start_wandb_run,
     update_wandb_config,
 )
-from ml import ML_REPORT_VERSION
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,17 +64,17 @@ def _initialize_report(
     n_trials: int,
     hourly_cv_splits: int,
     qh_cv_splits: int,
-) -> dict[str, Any]:
+) -> StandardReport:
 
     train_start_time = datetime.now(timezone.utc)
-    return {
-        "report_version": ML_REPORT_VERSION,
-        "run": {
+    return StandardReport(
+        report_version=ML_REPORT_VERSION,
+        run={
             "name": "two_stage_price_model_hyperparameter_tuning",
             "started_at": train_start_time.isoformat(),
             "wandb_run_id": None,
         },
-        "data": {
+        data={
             "hourly": {"start_date": HOURLY_START_DATE},
             "quarter_hourly": {"start_date": QUARTER_HOURLY_START_DATE},
             "holdout": {
@@ -81,14 +82,16 @@ def _initialize_report(
                 "end_date_exclusive": HOLDOUT_END_DATE_EXCLUSIVE,
             },
         },
-        "search": {
-            "method": "optuna",
-            "objective": "mae",
-            "n_trials": n_trials,
-            "cv_splits": {"hourly": hourly_cv_splits, "quarter_hourly": qh_cv_splits},
+        sections={
+            "search": {
+                "method": "optuna",
+                "objective": "mae",
+                "n_trials": n_trials,
+                "cv_splits": {"hourly": hourly_cv_splits, "quarter_hourly": qh_cv_splits},
+            },
+            "models": {},
         },
-        "models": {},
-    }
+    )
 
 
 def _wandb_log_optuna_trial(
@@ -130,11 +133,11 @@ def tune_two_stage_price_models(
     stage2_qh_model_type = ModelType.PRICE_QUARTER_HOURLY
     train_start_time = datetime.now(timezone.utc)
 
-    report: dict[str, Any] = _initialize_report(
+    report = _initialize_report(
         n_trials=n_trials,
         hourly_cv_splits=hourly_cv_splits,
         qh_cv_splits=qh_cv_splits,
-    )
+        )
     search_spaces = load_search_spaces(hyperparams_config_file)
     report["search"]["hyperparams_config_file"] = hyperparams_config_file
     report["search"]["spaces"] = search_spaces
@@ -144,13 +147,13 @@ def tune_two_stage_price_models(
             run_name=f"price-two-stage-tuning-{train_start_time.strftime('%Y%m%d-%H%M%S')}",
             group="price_hyperparameter_tuning",
         )
-        report["run"]["wandb_run_id"] = tracking_run.id
+        report.run["wandb_run_id"] = tracking_run.id
         update_wandb_config(
             tracking_run,
             {
-                "workflow": report["run"]["name"],
-                "started_at": report["run"]["started_at"],
-                "data": report["data"],
+                "workflow": report.run["name"],
+                "started_at": report.run["started_at"],
+                "data": report.data,
                 "search": report["search"],
             },
         )
@@ -183,9 +186,9 @@ def tune_two_stage_price_models(
     data_manifest_local_path = save_local_data_manifest(data_manifest)
     data_manifest_s3_uri = save_data_manifest(data_manifest)
 
-    report["data"]["data_version_id"] = data_manifest["data_version_id"]
-    report["data"]["manifest_local_path"] = data_manifest_local_path
-    report["data"]["manifest_s3_uri"] = data_manifest_s3_uri
+    report.attach_data_manifest(
+        data_manifest, data_manifest_local_path, data_manifest_s3_uri
+    )
     if tracking_run is not None:
         update_wandb_config(
             tracking_run,
@@ -404,12 +407,12 @@ def tune_two_stage_price_models(
     hourly_model_s3_uri = save_pipeline(
         final_hourly_pipeline,
         model_name=f"stage1_{stage1_hourly_model_type.value}_forecast",
-        metadata=report,
+        metadata=report.to_dict(),
     )
     qh_model_s3_uri = save_pipeline(
         final_qh_pipeline,
         model_name=f"stage2_{stage2_qh_model_type.value}_forecast",
-        metadata=report,
+        metadata=report.to_dict(),
     )
     report["models"][stage1_hourly_model_type.value]["artifacts"][
         "pipeline"
@@ -419,7 +422,7 @@ def tune_two_stage_price_models(
     ] = qh_model_s3_uri
 
     # Save the final report to S3
-    save_report(report, f"{report['run']['name']}_report")
+    save_report(report, f"{report.run['name']}_report")
 
     logger.info("Saved tuned hourly (stage 1) model to %s", hourly_model_s3_uri)
     logger.info("Saved tuned quarter-hourly (stage 2) model to %s", qh_model_s3_uri)

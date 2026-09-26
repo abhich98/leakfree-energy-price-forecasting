@@ -2,11 +2,11 @@ import argparse
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any
 
 import pandas as pd
 from sklearn.pipeline import Pipeline
 
+from ml import ML_REPORT_VERSION, QUARTER_HOURLY_START_DATE
 from ml.data_access import (
     load_hourly_price_model_features,
     load_quarter_hourly_price_model_features,
@@ -23,6 +23,7 @@ from ml.features.feature_engineering import (
     drop_incomplete_days,
     split_x_y,
 )
+from ml.reporting import StandardReport
 from ml.s3_model_io import load_best_hyperparameters, save_data_manifest, save_pipeline
 from ml.training_utils import (
     ModelType,
@@ -39,7 +40,6 @@ from ml.wandb_tracking import (
     start_wandb_run,
     update_wandb_config,
 )
-from ml import ML_REPORT_VERSION
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,8 +48,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 HOURLY_START_DATE = "2023-05-01"
-QUARTER_HOURLY_START_DATE = "2025-10-01"
-HOLDOUT_START_DATE = "2026-09-07"
+HOLDOUT_START_DATE = "2026-08-01"
 HOLDOUT_END_DATE_EXCLUSIVE = "2026-09-12"
 
 WEEKLY_PREDICTION_DAYS = 7
@@ -99,7 +98,7 @@ def _predict_hourly_for_window(
 
 
 def _build_pred_windows() -> tuple[pd.DatetimeIndex, pd.DatetimeIndex]:
-    """Build prediction-windows (start and end_exclusives) from warmup and holdout periods. They are weekly for now, but could be a different length in the future."""
+    """Build weekly prediction windows from warmup and holdout periods."""
     stage2_start = pd.Timestamp(QUARTER_HOURLY_START_DATE)
     holdout_start = pd.Timestamp(HOLDOUT_START_DATE)
     holdout_end_ex = pd.Timestamp(HOLDOUT_END_DATE_EXCLUSIVE)
@@ -147,16 +146,16 @@ def _initialize_predictions_store(
     }
 
 
-def _initialize_report() -> dict[str, Any]:
+def _initialize_report() -> StandardReport:
     train_start_time = datetime.now(timezone.utc)
-    return {
-        "report_version": ML_REPORT_VERSION,
-        "run": {
+    return StandardReport(
+        report_version=ML_REPORT_VERSION,
+        run={
             "name": "two_stage_price_model_training_prediction",
             "started_at": train_start_time.isoformat(),
             "wandb_run_id": None,
         },
-        "data": {
+        data={
             "hourly": {"start_date": HOURLY_START_DATE},
             "quarter_hourly": {"start_date": QUARTER_HOURLY_START_DATE},
             "holdout": {
@@ -164,12 +163,14 @@ def _initialize_report() -> dict[str, Any]:
                 "end_date_exclusive": HOLDOUT_END_DATE_EXCLUSIVE,
             },
         },
-        "backtest": {
-            "strategy": "weekly_expanding_window",
-            "prediction_window_days": WEEKLY_PREDICTION_DAYS,
+        sections={
+            "backtest": {
+                "strategy": "weekly_expanding_window",
+                "prediction_window_days": WEEKLY_PREDICTION_DAYS,
+            },
+            "models": {},
         },
-        "models": {},
-    }
+    )
 
 
 def run_two_stage_price_model_training_prediction(
@@ -194,13 +195,13 @@ def run_two_stage_price_model_training_prediction(
             run_name=f"price-two-stage-training-prediction-{train_start_time.strftime('%Y%m%d-%H%M%S')}",
             group="price_training_prediction",
         )
-        report["run"]["wandb_run_id"] = tracking_run.id
+        report.run["wandb_run_id"] = tracking_run.id
         update_wandb_config(
             tracking_run,
             {
-                "workflow": report["run"]["name"],
-                "started_at": report["run"]["started_at"],
-                "data": report["data"],
+                "workflow": report.run["name"],
+                "started_at": report.run["started_at"],
+                "data": report.data,
                 "backtest": report["backtest"],
             },
         )
@@ -230,9 +231,9 @@ def run_two_stage_price_model_training_prediction(
     data_manifest_local_path = save_local_data_manifest(data_manifest)
     data_manifest_s3_uri = save_data_manifest(data_manifest)
 
-    report["data"]["data_version_id"] = data_manifest["data_version_id"]
-    report["data"]["manifest_local_path"] = data_manifest_local_path
-    report["data"]["manifest_s3_uri"] = data_manifest_s3_uri
+    report.attach_data_manifest(
+        data_manifest, data_manifest_local_path, data_manifest_s3_uri
+    )
     if tracking_run is not None:
         update_wandb_config(
             tracking_run,
@@ -455,12 +456,12 @@ def run_two_stage_price_model_training_prediction(
     stage1_hourly_model_s3_uri = save_pipeline(
         final_stage1_hourly_pipeline,
         model_name=f"stage1_{stage1_hourly_model_type.value}_forecast",
-        metadata=report,
+        metadata=report.to_dict(),
     )
     stage2_qh_model_s3_uri = save_pipeline(
         final_stage2_qh_pipeline,
         model_name=f"stage2_{stage2_qh_model_type.value}_forecast",
-        metadata=report,
+        metadata=report.to_dict(),
     )
     report["models"][stage1_hourly_model_type.value].setdefault("artifacts", {})[
         "pipeline"
@@ -468,7 +469,7 @@ def run_two_stage_price_model_training_prediction(
     report["models"][stage2_qh_model_type.value].setdefault("artifacts", {})[
         "pipeline"
     ] = stage2_qh_model_s3_uri
-    save_report(report, f"{report['run']['name']}_report")
+    save_report(report, f"{report.run['name']}_report")
 
     logger.info("Saved weekly Stage 1 pipeline to %s", stage1_hourly_model_s3_uri)
     logger.info("Saved weekly Stage 2 pipeline to %s", stage2_qh_model_s3_uri)

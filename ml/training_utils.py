@@ -14,6 +14,7 @@ from ml.evaluate import (
     baseline_persistence,
     full_evaluation_report,
 )
+from ml.reporting import StandardReport
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,8 @@ DEFAULT_XGB_PARAMS = dict(
     n_estimators=500,
     learning_rate=0.05,
     max_depth=6,
-    subsample=0.8,  # confirmed to introduce some randomness i.e, eval results vary slightly on repeated runs when it is less than 1.0
+    # Subsampling introduces controlled randomness when it is below 1.0.
+    subsample=0.8,
     colsample_bytree=1.0,
     min_child_weight=5,
     reg_alpha=0.0,
@@ -169,17 +171,17 @@ def broadcast_predictions_h2qh(
 
 
 @overload
-def save_report(report: dict, target: ModelType) -> None: ...
+def save_report(report: StandardReport, target: ModelType) -> None: ...
 @overload
-def save_report(report: dict, target: str) -> None: ...
+def save_report(report: StandardReport, target: str) -> None: ...
 
 
-def save_report(report: dict, target: ModelType | str) -> None:
+def save_report(report: StandardReport, target: ModelType | str) -> None:
     name = f"{target.value}_model_report" if isinstance(target, ModelType) else target
     file_path = f"ml/artifacts/{name}.json"
     Path("ml/artifacts").mkdir(exist_ok=True)
     with open(file_path, "w") as f:
-        json.dump(report, f, indent=2)
+        json.dump(report.to_dict(), f, indent=2)
 
 
 def evaluate_holdout(y_pred, y_true, test_baseline_pred):
