@@ -68,7 +68,7 @@ def run_dbt(run_id: UUID) -> dict[str, str]:
 
     subprocess.run(["dbt", "test", *args], cwd=PROJECT_ROOT, check=True)
     test_results_uri = _upload_artifact(
-        s3, bucket, artifact_dir / "test_results.json", f"{prefix}/run_results_test.json"
+        s3, bucket, artifact_dir / "run_results.json", f"{prefix}/run_results_test.json"
     )
     manifest_uri = _upload_artifact(
         s3, bucket, artifact_dir / "manifest.json", f"{prefix}/manifest.json"
