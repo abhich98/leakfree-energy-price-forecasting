@@ -20,7 +20,7 @@ from ml.features.feature_engineering import (
     TARGET_COLUMNS,
     HourlyPriceModelFeatureEngineer,
     QuarterHourPriceModelFeatureEngineer,
-    drop_incomplete_days,
+    drop_incomplete_rows,
     split_x_y,
 )
 from ml.reporting import StandardReport
@@ -47,9 +47,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-HOURLY_START_DATE = "2023-05-01"
-HOLDOUT_START_DATE = "2026-08-01"
-HOLDOUT_END_DATE_EXCLUSIVE = "2026-09-12"
+HOURLY_START_DATE = "2024-08-24"
+HOLDOUT_START_DATE = "2026-08-24"
+HOLDOUT_END_DATE_EXCLUSIVE = "2026-08-31"
 
 WEEKLY_PREDICTION_DAYS = 7
 WEEK_START_DAY_IDX = 0  # Monday
@@ -212,12 +212,12 @@ def run_two_stage_price_model_training_prediction(
         "*" * 10,
         "*" * 10,
     )
-    hourly_df = drop_incomplete_days(
+    hourly_df = drop_incomplete_rows(
         fill_short_feature_gaps(
             hourly_raw, omit_columns=[TARGET_COLUMNS[stage1_hourly_model_type]], verbose=True
         )
     )
-    qh_df = drop_incomplete_days(
+    qh_df = drop_incomplete_rows(
         fill_short_feature_gaps(
             quarter_hourly_raw, omit_columns=[TARGET_COLUMNS[stage2_qh_model_type]], verbose=True
         )

@@ -50,8 +50,7 @@ def run_dbt(run_id: UUID) -> dict[str, str]:
 
     target_path = Path("target") / "pipeline-runs" / str(run_id)
     artifact_dir = DBT_PROJECT_DIR / target_path
-    command_base = [
-        "dbt",
+    args = [
         "--project-dir",
         str(DBT_PROJECT_DIR),
         "--profiles-dir",
@@ -62,14 +61,14 @@ def run_dbt(run_id: UUID) -> dict[str, str]:
     s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
     prefix = f"artifacts/pipeline-runs/{run_id}/dbt"
 
-    subprocess.run([*command_base, "run"], cwd=PROJECT_ROOT, check=True)
+    subprocess.run(["dbt", "run", *args], cwd=PROJECT_ROOT, check=True)
     run_results_uri = _upload_artifact(
         s3, bucket, artifact_dir / "run_results.json", f"{prefix}/run_results_run.json"
     )
 
-    subprocess.run([*command_base, "test"], cwd=PROJECT_ROOT, check=True)
+    subprocess.run(["dbt", "test", *args], cwd=PROJECT_ROOT, check=True)
     test_results_uri = _upload_artifact(
-        s3, bucket, artifact_dir / "run_results.json", f"{prefix}/run_results_test.json"
+        s3, bucket, artifact_dir / "test_results.json", f"{prefix}/run_results_test.json"
     )
     manifest_uri = _upload_artifact(
         s3, bucket, artifact_dir / "manifest.json", f"{prefix}/manifest.json"
