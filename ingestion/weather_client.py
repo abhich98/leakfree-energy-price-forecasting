@@ -102,7 +102,11 @@ def _is_retryable_http_error(exc: BaseException) -> bool:
     return isinstance(exc, (requests.ConnectionError, requests.Timeout, RuntimeError))
 
 
-def _extract_timed_dataframe(response, region: Region, resolution: str = "hourly", model: str | None = None) -> pd.DataFrame:
+def _extract_timed_dataframe(response, region: Region,
+                             resolution: str = "hourly",
+                             start_date: datetime | None = None, 
+                             end_date: datetime | None = None, 
+                             model: str | None = None) -> pd.DataFrame:
     if resolution == "hourly":
         timed_data = response.Hourly()
     elif resolution == "minutely_15":
@@ -133,7 +137,16 @@ def _extract_timed_dataframe(response, region: Region, resolution: str = "hourly
             signal_df["model"] = model
         frames.append(signal_df)
 
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if not frames:
+        return pd.DataFrame()
+
+    concatenated = pd.concat(frames, ignore_index=True)
+    if start_date is not None:
+        concatenated = concatenated[concatenated["timestamp"] >= start_date]
+    if end_date is not None:
+        concatenated = concatenated[concatenated["timestamp"] < end_date]
+
+    return concatenated
 
 
 @retry(
@@ -174,7 +187,7 @@ def _fetch_single_region_weather(
     if not responses:
         raise RuntimeError("No weather response returned by Open-Meteo")
 
-    return _extract_timed_dataframe(responses[0], region)[
+    return _extract_timed_dataframe(responses[0], region, start_date=start_date, end_date=end_date)[
         ["timestamp", "region", "signal_type", "value", "unit"]
     ]
 
@@ -268,7 +281,9 @@ def _fetch_forecast_stitched(
     if not responses:
         raise RuntimeError("No stitched forecast response returned by Open-Meteo")
 
-    df = _extract_timed_dataframe(responses[0], region, resolution="minutely_15", model="icon_seamless")
+    df = _extract_timed_dataframe(responses[0], region, 
+                                  start_date=start_date, end_date=end_date,
+                                  resolution="minutely_15", model="icon_seamless")
     # issue_timestamp is approximate for stitched data — use the target hour minus a
     # nominal lead time. This column is informational; the stitched model doesn't
     # have a single issue_timestamp per target hour.

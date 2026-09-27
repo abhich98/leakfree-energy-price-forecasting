@@ -115,7 +115,7 @@ def _fetch_weather_chunked(start_date: datetime, end_date: datetime) -> pd.DataF
             datetime(chunk_start.year, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
             end_date_local,
         )
-        logger.info(f"Fetching weather for {chunk_start.date()} → {chunk_end.date()}")
+        logger.info(f"Fetching weather for chunk {chunk_start.isoformat()} → {chunk_end.isoformat()}")
         df = fetch_historical_weather(chunk_start, chunk_end)
         if not df.empty:
             frames.append(df)
