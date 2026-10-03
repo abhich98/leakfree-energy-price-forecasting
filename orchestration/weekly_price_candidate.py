@@ -27,9 +27,8 @@ from ml.price_inference import (
     load_production_model_bundle,
     save_production_model_bundle,
 )
-from ml.promotion import evaluate_promotion
+from ml.promotion import PromotionDecision, evaluate_promotion
 from ml.reporting import StandardReport
-from ml.promotion import PromotionDecision
 from ml.s3_model_io import load_best_hyperparameters, save_data_manifest, save_pipeline
 from ml.training_utils import (
     ModelType,
@@ -38,6 +37,7 @@ from ml.training_utils import (
     save_report,
 )
 from ml.two_stage_price import TwoStagePriceModel, prepare_price_features
+from orchestration.run_audit import get_latest_elt_run
 
 logging.basicConfig(
     level=logging.INFO,
@@ -90,7 +90,11 @@ def _load_hyperparameters(model_name: str) -> dict | None:
         return None
 
 
-def _prepare_features(dataframe: pd.DataFrame, model_type: ModelType, drop_rows_index: pd.DatetimeIndex | None = None) -> pd.DataFrame:
+def _prepare_features(
+    dataframe: pd.DataFrame,
+    model_type: ModelType,
+    drop_rows_index: pd.DatetimeIndex | None = None,
+) -> pd.DataFrame:
 
     prepared = prepare_price_features(dataframe, model_type, require_target=True)
     logger.info(
@@ -269,6 +273,7 @@ def _initialize_report(
         windows: WeeklyTrainingWindows,
         hourly_decision: PromotionDecision,
         qh_decision: PromotionDecision,
+    source_elt_run_id: str,
 ) -> StandardReport:
     return StandardReport(
         report_version=ML_REPORT_VERSION,
@@ -278,6 +283,7 @@ def _initialize_report(
             "started_at": datetime.now(timezone.utc).isoformat(),
         },
         data={
+            "source_elt_run_id": source_elt_run_id,
             "evaluation": {
                 "start_date": windows.evaluation_start.date().isoformat(),
                 "end_date_exclusive": windows.evaluation_end_exclusive.date().isoformat(),
@@ -293,9 +299,13 @@ def _initialize_report(
     )
 
 
-def run_weekly_price_candidate(as_of_date: str) -> dict[str, Any]:
+def run_weekly_price_candidate(
+    as_of_date: str, ignore_elt_gate: bool = False
+) -> dict[str, Any]:
     """Train, evaluate, archive, and conditionally promote a price-model candidate."""
     logger.info("Starting weekly price candidate run for as-of date %s", as_of_date)
+    elt_run = get_latest_elt_run(require_success=not ignore_elt_gate)
+    source_elt_run_id = str(elt_run["run_id"])
     windows = build_weekly_training_windows(as_of_date)
     hourly_raw = load_hourly_price_model_features(
         start_date=windows.hourly_train_start.isoformat(),
@@ -314,7 +324,7 @@ def run_weekly_price_candidate(as_of_date: str) -> dict[str, Any]:
     )
 
     hourly = _prepare_features(hourly_raw, ModelType.PRICE_HOURLY)
-    hourly_dropped_index = hourly.index.difference(hourly_raw.index)
+    hourly_dropped_index = pd.DatetimeIndex(hourly_raw.index.difference(hourly.index))
 
     qh_index_to_drop = pd.DatetimeIndex([])
     for offset in range(0, 60, 15):
@@ -322,7 +332,11 @@ def run_weekly_price_candidate(as_of_date: str) -> dict[str, Any]:
             hourly_dropped_index + pd.Timedelta(minutes=offset)
         )
     qh_index_to_drop = qh_index_to_drop.sort_values()
-    quarter_hourly = _prepare_features(qh_raw, ModelType.PRICE_QUARTER_HOURLY, drop_rows_index=qh_index_to_drop)
+    quarter_hourly = _prepare_features(
+        qh_raw,
+        ModelType.PRICE_QUARTER_HOURLY,
+        drop_rows_index=qh_index_to_drop,
+    )
 
     hourly_params = _load_hyperparameters("stage1_price_hourly_forecast")
     qh_params = _load_hyperparameters("stage2_price_quarter_hourly_forecast")
@@ -366,6 +380,7 @@ def run_weekly_price_candidate(as_of_date: str) -> dict[str, Any]:
         windows=windows,
         hourly_decision=hourly_decision,
         qh_decision=qh_decision,
+        source_elt_run_id=source_elt_run_id,
     )
     manifest = build_data_manifest({"hourly": hourly, "quarter_hourly": quarter_hourly}, report)
     data_manifest_local_path = save_local_data_manifest(manifest)
@@ -427,9 +442,14 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Exclusive end date (YYYY-MM-DD) of the preceding 28-day evaluation period",
     )
+    parser.add_argument(
+        "--ignore-elt-gate",
+        action="store_true",
+        help="Allow training when the latest ELT run did not succeed.",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     arguments = parse_args()
-    run_weekly_price_candidate(arguments.as_of_date)
+    run_weekly_price_candidate(arguments.as_of_date, arguments.ignore_elt_gate)

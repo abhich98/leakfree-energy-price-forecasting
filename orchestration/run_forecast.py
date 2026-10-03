@@ -14,7 +14,7 @@ from orchestration.forecast_repository import persist_forecasts
 from orchestration.run_audit import (
     finish_pipeline_run,
     finish_stage_run,
-    get_pipeline_run,
+    get_latest_elt_run,
     start_pipeline_run,
     start_stage_run,
 )
@@ -64,12 +64,14 @@ def _run_stage(run_id: UUID, name: str, stage_config_hash: str, operation) -> An
 
 
 def run_forecast(
-    source_elt_run_id: UUID, start: datetime, end: datetime, model_uri: str | None = None
+    start: datetime,
+    end: datetime,
+    model_uri: str | None = None,
+    ignore_elt_gate: bool = False,
 ) -> UUID:
-    """Generate and persist a validated price forecast from a successful ELT run."""
-    elt_run = get_pipeline_run(source_elt_run_id)
-    if elt_run["pipeline_name"] != "elt" or elt_run["status"] != "succeeded":
-        raise ValueError("Forecasting requires a successful ELT run.")
+    """Generate and persist a validated price forecast using the latest ELT run."""
+    elt_run = get_latest_elt_run(require_success=not ignore_elt_gate)
+    source_elt_run_id = elt_run["run_id"]
     run_id = start_pipeline_run(
         "forecast",
         start,
@@ -119,7 +121,11 @@ def run_forecast(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a two-stage price forecast.")
-    parser.add_argument("--elt-run-id", required=True, help="Successful ELT run UUID to consume.")
+    parser.add_argument(
+        "--ignore-elt-gate",
+        action="store_true",
+        help="Allow forecasting even if the latest ELT run did not succeed.",
+    )
     parser.add_argument("--start-date", help="Local Europe/Berlin date in YYYY-MM-DD format.")
     parser.add_argument("--end-date", help="Exclusive local Europe/Berlin date in YYYY-MM-DD format.")
     parser.add_argument("--model-uri", help="S3 URI of a model-bundle JSON; overrides the production pointer.")
@@ -144,4 +150,4 @@ if __name__ == "__main__":
     )
     if end <= start:
         raise ValueError("--end-date must be after --start-date.")
-    run_forecast(UUID(args.elt_run_id), start, end, args.model_uri)
+    run_forecast(start, end, args.model_uri, args.ignore_elt_gate)
