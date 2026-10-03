@@ -1,6 +1,7 @@
 """Run validated, daily two-stage price forecasting independent of ELT."""
 
 import argparse
+import logging
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -19,6 +20,12 @@ from orchestration.run_audit import (
     start_stage_run,
 )
 from utils.config_hash import config_hash
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -52,14 +59,17 @@ def validate_forecasts(forecasts: pd.DataFrame, start: datetime, end: datetime) 
 
 
 def _run_stage(run_id: UUID, name: str, stage_config_hash: str, operation) -> Any:
+    logger.info("Starting forecast stage %s for run %s", name, run_id)
     stage_run_id = start_stage_run(run_id, name, stage_config_hash)
     try:
         result = operation()
     except Exception as exc:
         finish_stage_run(stage_run_id, "failed", error_message=str(exc))
+        logger.exception("Forecast stage %s failed for run %s", name, run_id)
         raise
     details = result if isinstance(result, dict) else {"row_count": len(result)}
     finish_stage_run(stage_run_id, "succeeded", details=details)
+    logger.info("Completed forecast stage %s for run %s: %s", name, run_id, details)
     return result
 
 
@@ -70,8 +80,21 @@ def run_forecast(
     ignore_elt_gate: bool = False,
 ) -> UUID:
     """Generate and persist a validated price forecast using the latest ELT run."""
+    logger.info(
+        "Starting forecast for %s to %s with model override=%s",
+        start.isoformat(),
+        end.isoformat(),
+        model_uri is not None,
+    )
+    if ignore_elt_gate:
+        logger.warning("Bypassing latest ELT success gate at operator request")
     elt_run = get_latest_elt_run(require_success=not ignore_elt_gate)
     source_elt_run_id = elt_run["run_id"]
+    logger.info(
+        "Using latest ELT run %s with status %s as forecast lineage",
+        source_elt_run_id,
+        elt_run["status"],
+    )
     run_id = start_pipeline_run(
         "forecast",
         start,
@@ -79,6 +102,8 @@ def run_forecast(
         config_hash({"pipeline": "forecast", "model_uri": model_uri, "source_elt_run_id": str(source_elt_run_id)}),
         source_elt_run_id=source_elt_run_id,
     )
+    logger.info("Created forecast audit run %s", run_id)
+
     def stage_config(stage_name: str) -> str:
         return config_hash(
             {
@@ -114,8 +139,10 @@ def run_forecast(
         )
     except Exception as exc:
         finish_pipeline_run(run_id, "failed", error_message=str(exc))
+        logger.exception("Forecast run %s failed", run_id)
         raise
     finish_pipeline_run(run_id, "succeeded")
+    logger.info("Forecast run %s completed successfully", run_id)
     return run_id
 
 
