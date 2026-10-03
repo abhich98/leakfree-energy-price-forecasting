@@ -10,6 +10,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
+from ml import FFILL_LIMIT
 from ml.evaluate import (
     baseline_persistence,
     full_evaluation_report,
@@ -44,7 +45,7 @@ def fill_short_feature_gaps(
                     column,
                     filled[column].isna().sum(),
                 )
-            filled[column] = filled[column].ffill(limit=3)
+            filled[column] = filled[column].ffill(limit=FFILL_LIMIT)
             if verbose:
                 logger.info(
                     "Column %s has %d missing values after near fill",

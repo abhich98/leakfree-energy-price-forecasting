@@ -46,9 +46,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-EVALUATION_DAYS = 7
+EVALUATION_DAYS = 28
 HOURLY_TRAINING_YEARS = 2
-WALK_FORWARD_WINDOW_DAYS = 7
+WALK_FORWARD_WINDOW_DAYS = 7 # A weekly walk-forward window
 
 
 @dataclass(frozen=True)
@@ -90,14 +90,26 @@ def _load_hyperparameters(model_name: str) -> dict | None:
         return None
 
 
-def _prepare_features(dataframe: pd.DataFrame, model_type: ModelType) -> pd.DataFrame:
+def _prepare_features(dataframe: pd.DataFrame, model_type: ModelType, drop_rows_index: pd.DatetimeIndex | None = None) -> pd.DataFrame:
+
     prepared = prepare_price_features(dataframe, model_type, require_target=True)
     logger.info(
-        "Prepared %s features: %d rows -> %d rows",
-        model_type.value,
-        len(dataframe),
-        len(prepared),
-    )
+            "Prepared %s features: %d rows -> %d rows",
+            model_type.value,
+            len(dataframe),
+            len(prepared),
+        )
+
+    if drop_rows_index is not None:
+        count_before_drop = len(prepared)
+        prepared = prepared.drop(index=drop_rows_index, errors="ignore")
+        logger.info(
+                "Dropped provided %s rows: %d rows -> %d rows",
+                model_type.value,
+                count_before_drop,
+                len(prepared),
+            )
+
     return prepared
 
 
@@ -300,8 +312,18 @@ def run_weekly_price_candidate(as_of_date: str) -> dict[str, Any]:
         len(hourly_raw),
         len(qh_raw),
     )
+
     hourly = _prepare_features(hourly_raw, ModelType.PRICE_HOURLY)
-    quarter_hourly = _prepare_features(qh_raw, ModelType.PRICE_QUARTER_HOURLY)
+    hourly_dropped_index = hourly.index.difference(hourly_raw.index)
+
+    qh_index_to_drop = pd.DatetimeIndex([])
+    for offset in range(0, 60, 15):
+        qh_index_to_drop = qh_index_to_drop.union(
+            hourly_dropped_index + pd.Timedelta(minutes=offset)
+        )
+    qh_index_to_drop = qh_index_to_drop.sort_values()
+    quarter_hourly = _prepare_features(qh_raw, ModelType.PRICE_QUARTER_HOURLY, drop_rows_index=qh_index_to_drop)
+
     hourly_params = _load_hyperparameters("stage1_price_hourly_forecast")
     qh_params = _load_hyperparameters("stage2_price_quarter_hourly_forecast")
     hourly_pipeline, qh_pipeline, evaluation = _fit_candidate(
