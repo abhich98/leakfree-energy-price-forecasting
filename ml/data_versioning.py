@@ -1,0 +1,111 @@
+import hashlib
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, cast
+
+import pandas as pd
+
+from ingestion.raw_data_inventory import load_latest_raw_data_inventory
+from ml import DATA_MANIFEST_VERSION
+from ml.reporting import StandardReport
+from utils.git import get_git_sha
+
+
+def _json_default(value: Any) -> str:
+    if isinstance(value, (pd.Timestamp, datetime)):
+        return value.isoformat()
+    return str(value)
+
+
+def _dataframe_fingerprint(dataframe: pd.DataFrame) -> tuple[str, dict[str, Any]]:
+    ordered = dataframe.sort_index().copy()
+    row_hashes = cast(
+        Any, pd.util.hash_pandas_object(ordered, index=True).values
+    ).tobytes()
+    content_hash = hashlib.sha256(row_hashes).hexdigest()
+
+    index = ordered.index
+    summary: dict[str, Any] = {
+        "rows": int(len(ordered)),
+        "columns": [str(column) for column in ordered.columns],
+        "dtypes": {str(column): str(dtype) for column, dtype in ordered.dtypes.items()},
+        "null_counts": {
+            str(column): int(count) for column, count in ordered.isna().sum().items()
+        },
+        "content_sha256": content_hash,
+    }
+    if len(index):
+        summary["index_start"] = _json_default(index.min())
+        summary["index_end"] = _json_default(index.max())
+
+    return content_hash, summary
+
+
+def build_data_manifest(
+    datasets: dict[str, pd.DataFrame],
+    report: StandardReport | None = None,
+) -> dict[str, Any]:
+    """Build a deterministic manifest for the exact prepared training datasets."""
+
+    # Determine dataset summaries, metadata, and raw inventory reference
+    dataset_summaries: dict[str, dict[str, Any]] = {}
+    for name, dataframe in datasets.items():
+        _, summary = _dataframe_fingerprint(dataframe)
+        dataset_summaries[name] = summary
+
+    if report:
+        metadata = {
+            "workflow": report.run["name"],
+            "data": report.data,
+        }
+    else:
+        metadata = {}
+
+    raw_inventory = load_latest_raw_data_inventory()
+    raw_inventory_reference = {
+        "inventory_id": raw_inventory["inventory_id"],
+        "s3_uri": raw_inventory["s3_uri"],
+        "object_count": len(raw_inventory["objects"]),
+    }
+
+    # Construct a canonical identity for the datasets, metadata, and raw inventory
+    identity = {
+        "datasets": dataset_summaries,
+        "metadata": metadata,
+        "raw_inventory": raw_inventory_reference,
+    }
+    canonical_identity = json.dumps(
+        identity,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_json_default,
+    ).encode("utf-8")
+    data_version_id = hashlib.sha256(canonical_identity).hexdigest()
+
+    return {
+        "manifest_version": DATA_MANIFEST_VERSION,
+        "data_version_id": data_version_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "git_revision": get_git_sha(),
+        "metadata": metadata,
+        "datasets": dataset_summaries,
+        "raw_inventory": raw_inventory_reference,
+    }
+
+
+def save_local_data_manifest(
+    manifest: dict[str, Any], directory: str = "ml/artifacts"
+) -> str:
+    """Save both an immutable local manifest and a convenience latest copy."""
+    output_dir = Path(directory)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    versioned_path = (
+        output_dir / f"data_version_manifest_{manifest['data_version_id']}.json"
+    )
+    latest_path = output_dir / "data_version_manifest.json"
+    payload = json.dumps(manifest, indent=2, default=_json_default)
+    if not versioned_path.exists():
+        versioned_path.write_text(payload, encoding="utf-8")
+    latest_path.write_text(payload, encoding="utf-8")
+    return str(versioned_path)

@@ -1,0 +1,100 @@
+{
+  "run": {
+    "name": "two_stage_price_model_hyperparameter_tuning",
+    "started_at": "2026-09-12T21:44:30.537936+00:00",
+    "wandb_run_id": null
+  },
+  "data": {
+    "hourly": {
+      "start_date": "2023-05-01"
+    },
+    "quarter_hourly": {
+      "start_date": "2025-10-01"
+    },
+    "holdout": {
+      "start_date": "2026-01-01",
+      "end_date_exclusive": "2026-04-01"
+    }
+  },
+  "search": {
+    "method": "optuna",
+    "objective": "mae",
+    "n_trials": 10,
+    "cv_splits": {
+      "hourly": 3,
+      "quarter_hourly": 2
+    }
+  },
+  "models": {
+    "price_hourly": {
+      "n_holdout": 2159,
+      "hyperparameters": {
+        "n_estimators": 522,
+        "learning_rate": 0.03260097424734794,
+        "max_depth": 5,
+        "subsample": 0.7008589929735534,
+        "colsample_bytree": 0.6577141593624146,
+        "min_child_weight": 3.798800952953763,
+        "reg_alpha": 0.0003605635716578879,
+        "reg_lambda": 2.8579914458340596
+      },
+      "metrics": {
+        "holdout": {
+          "mae": 16.427149604392472,
+          "rmse": 22.217137425766033,
+          "r2": 0.7269991065152343,
+          "directional_accuracy": 0.7999073645206114,
+          "deviation_directional_accuracy": 0.7748957850856878
+        },
+        "baseline_persistence": {
+          "mae": 27.376790180639183,
+          "rmse": 39.584834809224006,
+          "r2": 0.13334641175665274,
+          "directional_accuracy": 0.7911069939786939
+        }
+      },
+      "n_train": 23233,
+      "n_features": 79,
+      "cv_mae": 16.81838937912971,
+      "artifacts": {
+        "hyperparameters": "s3://zephyrwerk-data-lake/models/price_hourly_forecast/hyperparameters/archive/20260912-214616/params.json",
+        "pipeline": "s3://zephyrwerk-data-lake/models/price_hourly_forecast/archive/20260912-214912/price_hourly_forecast.joblib"
+      }
+    },
+    "price_quarter_hourly": {
+      "n_holdout": 8636,
+      "hyperparameters": {
+        "n_estimators": 831,
+        "learning_rate": 0.013454502195875254,
+        "max_depth": 8,
+        "subsample": 0.6113438644118102,
+        "colsample_bytree": 0.7924920300236562,
+        "min_child_weight": 4.726707783003381,
+        "reg_alpha": 2.8776709725050867e-06,
+        "reg_lambda": 4.777385461789592
+      },
+      "metrics": {
+        "holdout": {
+          "mae": 18.52818228322604,
+          "rmse": 25.151880236152092,
+          "r2": 0.6748175385227938,
+          "directional_accuracy": 0.7454840203798054,
+          "deviation_directional_accuracy": 0.7600741083835109
+        },
+        "baseline_persistence": {
+          "mae": 27.808704261232055,
+          "rmse": 40.69822422746038,
+          "r2": 0.14859318578627634,
+          "directional_accuracy": 0.770032422417786
+        }
+      },
+      "n_train": 8736,
+      "n_features": 81,
+      "cv_mae": 16.51233878124527,
+      "artifacts": {
+        "hyperparameters": "s3://zephyrwerk-data-lake/models/price_quarter_hourly_forecast/hyperparameters/archive/20260912-214845/params.json",
+        "pipeline": "s3://zephyrwerk-data-lake/models/price_quarter_hourly_forecast/archive/20260912-214912/price_quarter_hourly_forecast.joblib"
+      }
+    }
+  }
+}

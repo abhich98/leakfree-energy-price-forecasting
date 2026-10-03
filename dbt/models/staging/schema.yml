@@ -11,8 +11,8 @@ sources:
       - name: weather_forecast
 
 models:
-  - name: stg_smard_generation
-    description: "Cleaned generation signals from raw SMARD data.
+  - name: stg_smard_generation_load
+    description: "Cleaned generation and load signals from raw SMARD data.
                 NUCLEAR signal is excluded after retirement (2023-04-15 00:00 UTC)"
     tests:
       - dbt_utils.unique_combination_of_columns:
@@ -139,8 +139,8 @@ models:
               arguments:
                 values: ['EUR_MWH']
 
-  - name: stg_smard_generation_forecast
-    description: "Cleaned forecasted generation signals for the day-ahead market horizon."
+  - name: stg_smard_generation_load_forecast
+    description: "Cleaned forecasted generation and load signals for the day-ahead market horizon."
     tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:

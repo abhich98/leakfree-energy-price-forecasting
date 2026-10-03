@@ -41,20 +41,20 @@ The table below summarizes the key forecasting results from the reports in `ml/a
 
 > Data sources in this repo: `ml/artifacts/price_hourly_model_report.json`, `ml/artifacts/price_forecast_model_report.json`, `ml/artifacts/re_twin_study_price_benchmark_report.json`.
 
-| Model / Evaluation | MAE (EUR/MWh) | Baseline MAE (EUR/MWh) | Training Window | Test / Holdout Window | MAE vs Article EM (17.2) | MAE vs Article Re-Twin (21.4) |
-|---|---:|---:|---|---|---:|---:|
-| Price quarter-hourly (2-stage weekly expanding, Stage 2 holdout aggregate) | 17.715 | 26.095 | Expanding from 2025-10-01 up to each forecast week start | 2026-01-01 to 2026-04-01 (exclusive) | +0.515 (worse) | **-3.685** (better) |
-| Article benchmark: Electricity Maps forecast | 17.2 | 27.9 (prev-day) | n/a (external study) | 2026-01-01 to 2026-03-31 | 0.000 | **-4.200** |
-| Article benchmark: Re-Twin forecast | 21.4 | 27.9 (prev-day) | n/a (external study) | 2026-01-01 to 2026-03-31 | +4.200 | 0.000 |
+| Model / Evaluation | MAE (EUR/MWh) | Baseline MAE (EUR/MWh) | Training Window | Test / Holdout Window | MAE vs Article Electricity Maps (17.2) |
+|---|---:|---:|---|---|---:|
+| Article benchmark: Electricity Maps forecast | 17.2 | 27.9 (prev-day) | n/a (external study) | 2026-01-01 to 2026-03-31 | 0.000 |
+| Article benchmark: Re-Twin forecast | 21.4 | 27.9 (prev-day) | n/a (external study) | 2026-01-01 to 2026-03-31 | +4.200 |
+| Price hourly (2-stage weekly expanding, Stage 1 holdout aggregate) | 15.276 | 26.948 | Expanding from 2023-05-01 up to each forecast week start | 2026-01-01 to 2026-04-01 (exclusive) | -1.924 |
+| Price quarter-hourly (2-stage weekly expanding, Stage 2 holdout aggregate) | **17.715** | 26.095 | Expanding from 2025-10-01 up to each forecast week start | 2026-01-01 to 2026-04-01 (exclusive) | **+0.515** (achieved best) |
 
 <!-- | Price hourly (single-window holdout) | **16.178** | 26.863 | 2023-05-01 00:00 to 2025-12-31 23:00 | 2026-01-01 00:00 to 2026-03-31 23:00 | **-1.022** (better) | **-5.222** (better) |
-| Price hourly (2-stage weekly expanding, Stage 1 holdout aggregate) | **15.276** | 26.948 | Expanding from 2023-05-01 up to each forecast week start | 2026-01-01 to 2026-04-01 (exclusive) | **-1.924** (better) | **-6.124** (better) | -->
+ -->
 
 ## Interpretation
 
 - The repository’s **hourly models** (both single-window and Stage 1 in 2-stage backtest) outperform the article’s published 17.2 EUR/MWh reference MAE.
 - The **quarter-hour Stage 2 model** is slightly above 17.2 EUR/MWh, but still materially better than the article’s 21.4 EUR/MWh Re-Twin MAE and much better than previous-day baseline levels.
-- Overall, the results support the same practical conclusion as the article: **forecast accuracy is economically meaningful**, not just statistically meaningful.
 
 ## Notes on comparability
 

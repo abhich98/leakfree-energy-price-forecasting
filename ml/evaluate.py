@@ -47,7 +47,9 @@ def baseline_persistence(reference_series, y_true) -> dict:
 
 
 def full_evaluation_report(
-    y_true, y_pred, reference = None,
+    y_true,
+    y_pred,
+    reference=None,
     include_directional: bool = True,
     include_peak: bool = True,
 ) -> dict:
@@ -57,7 +59,9 @@ def full_evaluation_report(
         if reference is None:
             raise ValueError("reference is required when include_directional=True")
         report["directional_accuracy"] = directional_accuracy(y_true, y_pred)
-        report["deviation_directional_accuracy"] = deviation_directional_accuracy(y_true, y_pred, reference)
+        report["deviation_directional_accuracy"] = deviation_directional_accuracy(
+            y_true, y_pred, reference
+        )
     if include_peak:
         report["peak_mae"] = peak_mae(y_true, y_pred)
     return report

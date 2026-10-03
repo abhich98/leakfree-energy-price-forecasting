@@ -1,4 +1,5 @@
 from sqlalchemy import create_engine
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import sessionmaker
 
 from db.settings import get_settings
@@ -12,3 +13,7 @@ engine = create_engine(
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def get_connection() -> Connection:
+    return engine.connect()

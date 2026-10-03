@@ -85,7 +85,7 @@ models:
                 values: [True, False]
                 quote: false
   
-  - name: fct_energy_generation
+  - name: fct_energy_generation_load
     description: "Pivoted fact table of German electricity generation and consumption, sourced from SMARD. One row per timestamp and resolution."
     tests:
       - dbt_utils.unique_combination_of_columns:
@@ -412,48 +412,48 @@ models:
           - not_null
 
       - name: wind_onshore_mw
-        description: "Onshore wind generation in MW. Sourced from fct_energy_generation."
+        description: "Onshore wind generation in MW. Sourced from fct_energy_generation_load."
 
       - name: wind_offshore_mw
-        description: "Offshore wind generation in MW. Sourced from fct_energy_generation."
+        description: "Offshore wind generation in MW. Sourced from fct_energy_generation_load."
 
       - name: solar_mw
-        description: "Solar (photovoltaic) generation in MW. Sourced from fct_energy_generation."
+        description: "Solar (photovoltaic) generation in MW. Sourced from fct_energy_generation_load."
 
       - name: biomass_mw
-        description: "Biomass generation in MW. Sourced from fct_energy_generation."
+        description: "Biomass generation in MW. Sourced from fct_energy_generation_load."
 
       - name: hydropower_mw
-        description: "Run-of-river hydropower generation in MW. Sourced from fct_energy_generation."
+        description: "Run-of-river hydropower generation in MW. Sourced from fct_energy_generation_load."
 
       - name: pumped_storage_mw
-        description: "Pumped-storage hydro net generation in MW. Sourced from fct_energy_generation."
+        description: "Pumped-storage hydro net generation in MW. Sourced from fct_energy_generation_load."
 
       - name: natural_gas_mw
-        description: "Natural gas generation in MW. Sourced from fct_energy_generation."
+        description: "Natural gas generation in MW. Sourced from fct_energy_generation_load."
 
       - name: hard_coal_mw
-        description: "Hard coal generation in MW. Sourced from fct_energy_generation."
+        description: "Hard coal generation in MW. Sourced from fct_energy_generation_load."
 
       - name: brown_coal_mw
-        description: "Brown coal (lignite) generation in MW. Sourced from fct_energy_generation."
+        description: "Brown coal (lignite) generation in MW. Sourced from fct_energy_generation_load."
 
       - name: nuclear_mw
         description: "Nuclear generation in MW. Zero after April 2023 German nuclear phase-out. 
-                      Sourced from fct_energy_generation."
+                      Sourced from fct_energy_generation_load."
 
       - name: other_conventional_mw
-        description: "Other conventional generation in MW. Sourced from fct_energy_generation."
+        description: "Other conventional generation in MW. Sourced from fct_energy_generation_load."
 
       - name: other_renewable_mw
-        description: "Other renewable generation in MW. Sourced from fct_energy_generation."
+        description: "Other renewable generation in MW. Sourced from fct_energy_generation_load."
 
       - name: total_consumption_mw
-        description: "Total electricity consumption in MW. Sourced from fct_energy_generation."
+        description: "Total electricity consumption in MW. Sourced from fct_energy_generation_load."
 
       - name: residual_load_mw
         description: "Residual load in MW (total consumption minus variable renewables). 
-                      Sourced from fct_energy_generation."
+                      Sourced from fct_energy_generation_load."
 
       - name: price_eur_mwh
         description: "DE_LU day-ahead spot price in EUR/MWh. Sourced from fct_market_prices."

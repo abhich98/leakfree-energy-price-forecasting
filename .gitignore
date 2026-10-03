@@ -10,6 +10,7 @@ build/
 # Log
 pipeline.log
 logs
+wandb/
 
 # Virtual environments / uv
 .venv/
@@ -38,6 +39,13 @@ dbt/.user.yml
 # AWS
 .aws/
 
+# Terraform local state
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
 # MinIO docker mount
 minio-data/
 
@@ -57,3 +65,6 @@ Thumbs.db
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Personal miscellaneous
+misc_scripts/

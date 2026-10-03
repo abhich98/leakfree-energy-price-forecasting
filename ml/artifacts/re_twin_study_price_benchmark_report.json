@@ -1,0 +1,44 @@
+{
+  "report_type": "external_study_price_forecast_benchmark",
+  "source": {
+    "name": "Re-Twin Energy",
+    "title": "Impact of Day-Ahead Forecast Accuracy on BESS Revenues",
+    "url": "https://re-twin.energy/blog/impact-of-day-ahead-forecast",
+    "retrieved_at": "2026-08-22T00:00:00+00:00"
+  },
+  "scope": {
+    "market": "Germany day-ahead electricity price",
+    "resolution": "15min",
+    "study_window": {
+      "start": "2026-01-01",
+      "end": "2026-03-31"
+    },
+    "notes": "Price-forecast metrics only; battery/BESS revenue metrics intentionally excluded."
+  },
+  "signals": {
+    "previous_day_baseline": {
+      "mae_eur_mwh": 27.9
+    },
+    "re_twin_forecast": {
+      "mae_eur_mwh": 21.4
+    },
+    "electricity_maps_forecast": {
+      "mae_eur_mwh": 17.2
+    }
+  },
+  "comparative": {
+    "best_signal": "electricity_maps_forecast",
+    "mae_improvement_vs_previous_day_baseline": {
+      "re_twin_forecast": 6.5,
+      "electricity_maps_forecast": 10.7
+    },
+    "mae_improvement_pct_vs_previous_day_baseline": {
+      "re_twin_forecast": 23.3,
+      "electricity_maps_forecast": 38.4
+    }
+  },
+  "limitations": [
+    "Only MAE was explicitly published for forecast accuracy in the article.",
+    "No published RMSE, R2, directional accuracy, fold-level CV, feature count, or training sample count."
+  ]
+}

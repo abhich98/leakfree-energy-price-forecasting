@@ -42,6 +42,11 @@ lagged AS (
         p2.wind_offshore_mw AS wind_offshore_lag_48h,
         p2.solar_mw AS solar_lag_48h,
 
+        -- p1.wind_onshore_forecast_mw AS wind_onshore_forecast_mw_lag_24h, A LOT OF DATA MISSING
+        p1.wind_offshore_forecast_mw AS wind_offshore_forecast_mw_lag_24h,
+        p1.solar_forecast_mw AS solar_forecast_mw_lag_24h,
+        -- p1.residual_load_forecast_mw AS residual_load_forecast_mw_lag_24h,
+
         p2.wind_speed_100m_brandenburg_forecast
             - p2.wind_speed_100m_brandenburg AS wind_speed_100m_brandenburg_error_lag_48h,
         p2.wind_speed_100m_schleswig_forecast
@@ -111,23 +116,23 @@ lagged AS (
         p2.temperature_2m_bawue_forecast
             - p2.temperature_2m_bawue AS temperature_2m_bawue_error_lag_48h,
 
-        p2.total_generation_forecast_mw
-            - p2.total_generation_mw AS total_generation_error_mw_lag_48h
+        p2.total_consumption_forecast_mw
+            - p2.total_consumption_mw AS total_consumption_error_mw_lag_48h
     FROM hourly AS target
     LEFT JOIN hourly AS p1
-        ON p1.timestamp = target.timestamp - INTERVAL '1 day'
+        ON p1.timestamp = target.timestamp - INTERVAL '24 hours'
     LEFT JOIN hourly AS p2
-        ON p2.timestamp = target.timestamp - INTERVAL '2 days'
+        ON p2.timestamp = target.timestamp - INTERVAL '48 hours'
     LEFT JOIN hourly AS p3
-        ON p3.timestamp = target.timestamp - INTERVAL '3 days'
+        ON p3.timestamp = target.timestamp - INTERVAL '72 hours'
     LEFT JOIN hourly AS p4
-        ON p4.timestamp = target.timestamp - INTERVAL '4 days'
+        ON p4.timestamp = target.timestamp - INTERVAL '96 hours'
     LEFT JOIN hourly AS p5
-        ON p5.timestamp = target.timestamp - INTERVAL '5 days'
+        ON p5.timestamp = target.timestamp - INTERVAL '120 hours'
     LEFT JOIN hourly AS p6
-        ON p6.timestamp = target.timestamp - INTERVAL '6 days'
+        ON p6.timestamp = target.timestamp - INTERVAL '144 hours'
     LEFT JOIN hourly AS p7
-        ON p7.timestamp = target.timestamp - INTERVAL '7 days'
+        ON p7.timestamp = target.timestamp - INTERVAL '168 hours'
 )
 SELECT
     timestamp,
@@ -191,6 +196,13 @@ SELECT
     wind_offshore_lag_48h,
     solar_lag_48h,
 
+    total_consumption_forecast_mw,
+    total_consumption_error_mw_lag_48h,
+    -- wind_onshore_forecast_mw_lag_24h,
+    wind_offshore_forecast_mw_lag_24h,
+    solar_forecast_mw_lag_24h,
+    -- residual_load_forecast_mw_lag_24h,
+
     wind_speed_100m_brandenburg_error_lag_48h,
     wind_speed_100m_schleswig_error_lag_48h,
     wind_speed_100m_bavaria_error_lag_48h,
@@ -214,7 +226,5 @@ SELECT
     temperature_2m_brandenburg_error_lag_48h,
     temperature_2m_schleswig_error_lag_48h,
     temperature_2m_bavaria_error_lag_48h,
-    temperature_2m_bawue_error_lag_48h,
-    total_generation_forecast_mw,
-    total_generation_error_mw_lag_48h
+    temperature_2m_bawue_error_lag_48h
 FROM lagged

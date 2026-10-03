@@ -1,13 +1,13 @@
 from io import BytesIO
 import logging
 import os
+from datetime import datetime, timezone
 from enum import Enum
 
 import boto3
 import pandas as pd
 from botocore.exceptions import NoCredentialsError
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -38,10 +38,29 @@ def is_already_uploaded(
         return False
 
 
-def create_bucket_if_not_exists(
+def enable_bucket_versioning(
     bucket_name: str | None = None, endpoint_url: str | None = None
+) -> None:
+    """Enables versioning on the specified S3 bucket."""
+    if bucket_name is None:
+        bucket_name = os.environ.get("ZEPHYRWERK_AWS_BUCKET_NAME")
+    if endpoint_url is None:
+        endpoint_url = os.environ.get("AWS_ENDPOINT_URL") or None
+
+    s3 = boto3.client("s3", endpoint_url=endpoint_url)
+    s3.put_bucket_versioning(
+        Bucket=bucket_name,
+        VersioningConfiguration={"Status": "Enabled"},
+    )
+    logger.info(f"Bucket versioning enabled for '{bucket_name}'.")
+
+
+def create_bucket_if_not_exists(
+    bucket_name: str | None = None,
+    endpoint_url: str | None = None,
+    enable_versioning: bool = True,
 ):
-    """Creates an S3 bucket if it does not already exist."""
+    """Creates an S3 bucket if it does not already exist and optionally enables versioning."""
     if bucket_name is None:
         bucket_name = os.environ.get("ZEPHYRWERK_AWS_BUCKET_NAME")
     if endpoint_url is None:
@@ -54,6 +73,10 @@ def create_bucket_if_not_exists(
     except Exception:
         logger.info(f"Bucket '{bucket_name}' does not exist. Creating it now.")
         s3.create_bucket(Bucket=bucket_name)
+
+        # Enable versioning if requested during bucket creation
+        if enable_versioning:
+            enable_bucket_versioning(bucket_name=bucket_name, endpoint_url=endpoint_url)
 
 
 def get_file_name(
@@ -82,7 +105,7 @@ def get_file_name(
 
 def upload_to_s3(
     dataframe: pd.DataFrame, data_name: DATA_NAMES, resolution: str | None = None
-):
+) -> dict:
     """Uploads a pandas DataFrame to an S3 bucket as a Parquet file.
     The file name is generated based on the timestamp of the first row in the DataFrame.
 
@@ -125,8 +148,20 @@ def upload_to_s3(
     s3 = boto3.client("s3", endpoint_url=AWS_ENDPOINT_URL)
     bucket_name = BUCKET_NAME
     try:
-        s3.put_object(Bucket=bucket_name, Key=file_name, Body=buffer)
-        logger.info(f"File uploaded successfully to {file_name}")
+        response = s3.put_object(Bucket=bucket_name, Key=file_name, Body=buffer)
+        version_id = response.get("VersionId")
+        logger.info(
+            f"File uploaded successfully to {file_name} (VersionId: {version_id})"
+        )
+        return {
+            "key": file_name,
+            "data_name": data_name.value,
+            "date": datetime(year, month, day, tzinfo=timezone.utc).date().isoformat(),
+            "resolution": resolution,
+            "version_id": version_id,
+            "etag": response.get("ETag"),
+        }
+
     except NoCredentialsError:
         logger.error(
             "AWS credentials not found. \

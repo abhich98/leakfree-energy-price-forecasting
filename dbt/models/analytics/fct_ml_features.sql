@@ -12,7 +12,6 @@ SELECT
     g.natural_gas_mw,
     g.hard_coal_mw,
     g.brown_coal_mw,
-    g.nuclear_mw,
     g.other_conventional_mw,
     g.other_renewable_mw,
 
@@ -112,11 +111,11 @@ SELECT
 FROM 
     {{ ref('fct_market_prices') }} AS mp
         LEFT JOIN
-    {{ ref('fct_energy_generation') }} AS g
+    {{ ref('fct_energy_generation_load') }} AS g
         ON mp.timestamp = g.timestamp
         AND mp.resolution = g.resolution
         LEFT JOIN
-    {{ ref('fct_energy_generation_forecast') }} AS gf
+    {{ ref('fct_energy_generation_load_forecast') }} AS gf
         ON mp.timestamp = gf.timestamp
         AND mp.resolution = gf.resolution
         LEFT JOIN
