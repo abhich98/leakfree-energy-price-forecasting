@@ -16,10 +16,15 @@ def prepare_price_features(
     model_type: ModelType,
     *,
     require_target: bool,
+    fill_short_gaps: bool = True,
 ) -> pd.DataFrame:
-    """Fill short feature gaps and remove only rows still unusable by a model."""
+    """Optionally fill short feature gaps, then remove unusable model rows."""
     target_column = TARGET_COLUMNS[model_type]
-    filled = fill_short_feature_gaps(dataframe, omit_columns=[target_column])
+    filled = (
+        fill_short_feature_gaps(dataframe, omit_columns=[target_column])
+        if fill_short_gaps
+        else dataframe.copy()
+    )
     required_columns = list(filled.columns)
     if not require_target and target_column in required_columns:
         required_columns.remove(target_column)

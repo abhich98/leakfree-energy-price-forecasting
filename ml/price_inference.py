@@ -10,6 +10,7 @@ from typing import Any
 import joblib
 import pandas as pd
 
+from ingestion.smard_client import RESOLUTION
 from ml.data_access import (
     load_hourly_price_model_features,
     load_quarter_hourly_price_model_features,
@@ -119,6 +120,11 @@ def predict_two_stage_prices(
         start_date,
         end_date_exclusive,
     )
+    quarter_hourly_index: pd.DatetimeIndex = pd.DatetimeIndex(quarter_hourly.index)
+    hourly_index: pd.DatetimeIndex = pd.DatetimeIndex(hourly.index)
+    quarter_hourly = quarter_hourly.loc[
+        quarter_hourly_index.floor("h").isin(hourly_index)
+    ].copy()
     model = TwoStagePriceModel(
         load_pipeline_from_uri(bundle["hourly_model_uri"]),
         load_pipeline_from_uri(bundle["quarter_hourly_model_uri"]),
@@ -137,8 +143,8 @@ def predict_two_stage_prices(
 
     return pd.concat(
         [
-            as_rows(hourly, predictions.hourly, "hour"),
-            as_rows(quarter_hourly, predictions.quarter_hourly, "quarter_hour"),
+            as_rows(hourly, predictions.hourly, RESOLUTION.HOUR.value),
+            as_rows(quarter_hourly, predictions.quarter_hourly, RESOLUTION.QUARTER_HOUR.value),
         ],
         ignore_index=True,
     )

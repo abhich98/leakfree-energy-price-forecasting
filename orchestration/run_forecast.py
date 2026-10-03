@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from dotenv import load_dotenv
 
+from ingestion.smard_client import RESOLUTION
 from ml.price_inference import load_production_model_bundle, predict_two_stage_prices
 from orchestration.forecast_repository import persist_forecasts
 from orchestration.run_audit import (
@@ -38,19 +39,37 @@ def _default_window() -> tuple[datetime, datetime]:
 
 
 def validate_forecasts(forecasts: pd.DataFrame, start: datetime, end: datetime) -> None:
-    """Reject missing or incomplete point/quantile forecasts before persistence."""
-    expected = {
-        "hour": len(pd.date_range(start, end, freq="h", inclusive="left")),
-        "quarter_hour": len(pd.date_range(start, end, freq="15min", inclusive="left")),
+    """Reject invalid predictions while allowing omitted timestamps with unavailable features."""
+    expected_timestamps = {
+        RESOLUTION.HOUR.value: pd.date_range(start, end, freq="h", inclusive="left"),
+        RESOLUTION.QUARTER_HOUR.value: pd.date_range(start, end, freq="15min", inclusive="left"),
     }
     if forecasts.empty or forecasts["predicted_value"].isna().any():
         raise ValueError("Forecast contains missing predictions.")
-    for resolution, expected_count in expected.items():
-        actual_count = forecasts.loc[
-            forecasts["resolution"] == resolution, "target_timestamp"
-        ].nunique()
-        if actual_count != expected_count:
-            raise ValueError(f"Expected {expected_count} {resolution} forecasts, found {actual_count}.")
+    forecast_key = ["target_timestamp", "resolution"]
+    if "quantile" in forecasts:
+        forecast_key.append("quantile")
+    if forecasts[forecast_key].duplicated().any():
+        raise ValueError("Forecast contains duplicate point predictions.")
+    for resolution, expected in expected_timestamps.items():
+        actual = pd.DatetimeIndex(
+            pd.to_datetime(
+                forecasts.loc[forecasts["resolution"] == resolution, "target_timestamp"],
+                utc=True,
+            ).unique()
+        )
+        expected = pd.DatetimeIndex(pd.to_datetime(expected, utc=True))
+        unexpected = actual.difference(expected)
+        if not unexpected.empty:
+            raise ValueError(f"Forecast contains {resolution} timestamps outside the requested window.")
+        missing = expected.difference(actual)
+        if not missing.empty:
+            logger.warning(
+                "Omitting %d %s forecast timestamps with unavailable features: %s",
+                len(missing),
+                resolution,
+                ", ".join(timestamp.isoformat() for timestamp in missing),
+            )
     if "quantile" in forecasts and forecasts["quantile"].notna().any():
         ordered = forecasts.dropna(subset=["quantile"]).sort_values("quantile")
         crossings = ordered.groupby(["target_timestamp", "resolution"])["predicted_value"].diff().lt(0)
