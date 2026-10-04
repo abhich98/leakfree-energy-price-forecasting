@@ -27,7 +27,7 @@ from ml.price_inference import (
     load_production_model_bundle,
     save_production_model_bundle,
 )
-from ml.promotion import PromotionDecision, evaluate_promotion
+from ml.promotion import PromotionDecision, evaluate_candidate_rejection
 from ml.reporting import StandardReport
 from ml.s3_model_io import load_best_hyperparameters, save_data_manifest, save_pipeline
 from ml.training_utils import (
@@ -353,20 +353,20 @@ def run_weekly_price_candidate(
             champion, hourly_evaluation, qh_evaluation
         )
 
-    hourly_decision = evaluate_promotion(
+    hourly_decision = evaluate_candidate_rejection(
         evaluation["hourly_predictions"],
         evaluation["hourly_actuals"],
         evaluation["hourly_baseline"],
         champion_hourly,
     )
-    qh_decision = evaluate_promotion(
+    qh_decision = evaluate_candidate_rejection(
         evaluation["qh_predictions"],
         evaluation["qh_actuals"],
         evaluation["qh_baseline"],
         champion_qh,
     )
     logger.info(
-        "Promotion evaluation: hourly approved=%s (candidate MAE=%.4f, champion MAE=%s), "
+        "Candidate rejection gate: hourly approved=%s (candidate MAE=%.4f, champion MAE=%s), "
         "quarter-hour approved=%s (candidate MAE=%.4f, champion MAE=%s)",
         hourly_decision.approved,
         hourly_decision.candidate_mae,
