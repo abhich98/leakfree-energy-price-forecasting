@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1560 590" width="1560" height="590" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<style>
+.bg{fill:#ffffff}.card{fill:#ffffff}.t{fill:#1f2328}.m{fill:#59636e}
+.ln{stroke:#8c959f;fill:none;stroke-width:1.6}.ah{fill:#8c959f}
+.src{color:#0969da}.raw{color:#9a6700}.elt{color:#8250df}.ml{color:#1a7f37}.lc{color:#bc4c00}
+@media (prefers-color-scheme: dark){
+.bg{fill:#0d1117}.card{fill:#161b22}.t{fill:#e6edf3}.m{fill:#9198a1}
+.ln{stroke:#6e7681}.ah{fill:#6e7681}
+.src{color:#4493f8}.raw{color:#d29922}.elt{color:#a371f7}.ml{color:#3fb950}.lc{color:#db6d28}}
+.lb{font-size:15px;font-weight:600}.sb{font-size:12px}
+</style><defs>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker>
+<symbol id="i-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
+<symbol id="i-cloud" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3"/><path d="M8 2v1.5M2 8h1.5M3.8 3.8l1 1M12.2 3.8l-1 1"/><path d="M9 20h8.5a3.5 3.5 0 0 0 0-7 5 5 0 0 0-9.4 1.6A2.8 2.8 0 0 0 9 20z"/></symbol>
+<symbol id="i-bucket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="8" ry="2.6"/><path d="M4 6l2 13c.3 1.7 2.9 2.6 6 2.6s5.7-.9 6-2.6L20 6"/></symbol>
+<symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/></symbol>
+<symbol id="i-db" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+<symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12.5l9 5 9-5"/><path d="M3 16.5l9 5 9-5"/></symbol>
+<symbol id="i-flow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><path d="M6.5 10v3.5a2.5 2.5 0 0 0 2.5 2.5h5"/></symbol>
+<symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 6-7"/></symbol>
+<symbol id="i-steps" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M6 16h3v-4h3v2h3v-5h3V7h2"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5L16 9.5"/></symbol>
+<symbol id="i-table" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M3 14.5h18M9 4v16"/></symbol>
+<symbol id="i-flask" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6L4.6 18.8A1.5 1.5 0 0 0 5.9 21h12.2a1.5 1.5 0 0 0 1.3-2.2L14 9V3"/><path d="M7 15h10"/></symbol>
+<symbol id="i-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/></symbol>
+</defs>
+<rect class="bg" width="1560" height="590" rx="14"/>
+<text class="t" x="60" y="54" font-size="26" font-weight="700">Electricity price forecasting</text>
+<text class="m" x="60" y="80" font-size="14">Architecture overview</text>
+<g class="elt"><rect class="card" x="330" y="104" width="300" height="58" rx="12" stroke="currentColor" stroke-width="1.6"/>
+<circle cx="362" cy="133.0" r="19" fill="currentColor" fill-opacity="0.13"/>
+<use href="#i-flow" x="351" y="122.0" width="22" height="22"/></g>
+<text class="t lb" x="390" y="130.0">ELT runner</text>
+<text class="m sb" x="390" y="148.0">orchestration · audit · resume</text>
+<g class="src"><rect class="card" x="60" y="190" width="200" height="64" rx="12" stroke="currentColor" stroke-width="1.6"/>
+<circle cx="92" cy="222.0" r="19" fill="currentColor" fill-opacity="0.13"/>
+<use href="#i-bolt" x="81" y="211.0" width="22" height="22"/></g>
+<text class="t lb" x="120" y="219.0">SMARD</text>
+<text class="m sb" x="120" y="237.0">market data</text>
+<g class="src"><rect class="card" x="60" y="290" width="200" height="64" rx="12" stroke="currentColor" stroke-width="1.6"/>
+<circle cx="92" cy="322.0" r="19" fill="currentColor" fill-opacity="0.13"/>
+<use href="#i-cloud" x="81" y="311.0" width="22" height="22"/></g>
+<text class="t lb" x="120" y="319.0">Open-Meteo</text>
+<text class="m sb" x="120" y="337.0">weather + forecasts</text>
+<g class="raw"><rect class="card" x="330" y="190" width="200" height="64" rx="12" stroke="currentColor" stroke-width="1.6"/>
+<circle cx="362" cy="222.0" r="19" fill="currentColor" fill-opacity="0.13"/>
+<use href="#i-bucket" x="351" y="211.0" width="22" height="22"/></g>
+<text class="t lb" x="390" y="219.0">S3 raw</text>
+<text class="m sb" x="390" y="237.0">daily Parquet partitions</text>
+<g class="raw"><rect class="card" x="330" y="290" width="200" height="64" rx="12" stroke="currentColor" stroke-width="1.6"/>
+<circle cx="362" cy="322.0" r="19" fill="currentColor" fill-opacity="0.13"/>
+<use href="#i-list" x="351" y="311.0" width="22" height="22"/></g>
+<text class="t lb" x="390" y="319.0">Version inventory</text>
+<text class="m sb" x="390" y="337.0">raw-data lineage</text>
+<g class="elt"><rect class="card" x="600" y="190" width="200" height="64" rx="12" stroke="currentColor" stroke-width="1.6"/>
+<circle cx="632" cy="222.0" r="19" fill="currentColor" fill-opacity="0.13"/>
+<use href="#i-db" x="621" y="211.0" width="22" height="22"/></g>
+<text class="t lb" x="660" y="219.0">PostgreSQL</text>
+<text class="m sb" x="660" y="237.0">raw tables</text>
+<g class="elt"><rect class="card" x="600" y="290" width="200" height="64" rx="12" stroke="currentColor" stroke-width="1.6"/>
+<circle cx="632" cy="322.0" r="19" fill="currentColor" fill-opacity="0.13"/>
+<use href="#i-layers" x="621" y="311.0" width="22" height="22"/></g>
+<text class="t lb" x="660" y="319.0">dbt</text>
+<text class="m sb" x="660" y="337.0">clean tables · features</text>
+<g class="ml"><rect x="865" y="160" width="635" height="230" rx="14" fill="currentColor" fill-opacity="0.05" stroke="currentColor" stroke-width="1.4" stroke-dasharray="6 5"/>
+<text x="885" y="188" class="lb" fill="currentColor">Forecasting</text></g>
+<g class="ml"><rect class="card" x="890" y="210" width="175" height="64" rx="12" stroke="currentColor" stroke-width="1.6"/>
+<circle cx="922" cy="242.0" r="19" fill="currentColor" fill-opacity="0.13"/>
+<use href="#i-chart" x="911" y="231.0" width="22" height="22"/></g>
+<text class="t lb" x="950" y="239.0">Hourly</text>
+<text class="m sb" x="950" y="257.0">stage 1</text>
+<g class="ml"><rect class="card" x="1095" y="210" width="175" height="64" rx="12" stroke="currentColor" stroke-width="1.6"/>
+<circle cx="1127" cy="242.0" r="19" fill="currentColor" fill-opacity="0.13"/>
+<use href="#i-steps" x="1116" y="231.0" width="22" height="22"/></g>
+<text class="t lb" x="1155" y="239.0">Quarter-hourly</text>
+<text class="m sb" x="1155" y="257.0">stage 2</text>
+<g class="ml"><rect class="card" x="1300" y="210" width="175" height="64" rx="12" stroke="currentColor" stroke-width="1.6"/>
+<circle cx="1332" cy="242.0" r="19" fill="currentColor" fill-opacity="0.13"/>
+<use href="#i-shield" x="1321" y="231.0" width="22" height="22"/></g>
+<text class="t lb" x="1360" y="239.0">Validation</text>
+<text class="m sb" x="1360" y="257.0">quality checks</text>
+<g class="elt"><rect class="card" x="1300" y="300" width="175" height="64" rx="12" stroke="currentColor" stroke-width="1.6"/>
+<circle cx="1332" cy="332.0" r="19" fill="currentColor" fill-opacity="0.13"/>
+<use href="#i-table" x="1321" y="321.0" width="22" height="22"/></g>
+<text class="t lb" x="1360" y="329.0">Forecasts</text>
+<text class="m sb" x="1360" y="347.0">run + bundle ids</text>
+<g class="lc"><rect x="600" y="440" width="900" height="110" rx="14" fill="currentColor" fill-opacity="0.05" stroke="currentColor" stroke-width="1.4"/>
+<use href="#i-flask" x="620" y="454" width="20" height="20"/>
+<text x="648" y="470" class="lb" fill="currentColor">Model lifecycle</text></g>
+<g class="lc"><rect class="card" x="620" y="490" width="125" height="40" rx="20" stroke="currentColor" stroke-width="1.6"/>
+</g>
+<text class="t" x="682.5" y="515" font-size="13" text-anchor="middle">Train</text>
+<path class="ln" d="M745,510 H764" marker-end="url(#a)"/>
+<g class="lc"><rect class="card" x="767" y="490" width="125" height="40" rx="20" stroke="currentColor" stroke-width="1.6"/>
+</g>
+<text class="t" x="829.5" y="515" font-size="13" text-anchor="middle">Tune</text>
+<path class="ln" d="M892,510 H911" marker-end="url(#a)"/>
+<g class="lc"><rect class="card" x="914" y="490" width="125" height="40" rx="20" stroke="currentColor" stroke-width="1.6"/>
+</g>
+<text class="t" x="976.5" y="515" font-size="13" text-anchor="middle">Backtest</text>
+<path class="ln" d="M1039,510 H1058" marker-end="url(#a)"/>
+<g class="lc"><rect class="card" x="1061" y="490" width="125" height="40" rx="20" stroke="currentColor" stroke-width="1.6"/>
+</g>
+<text class="t" x="1123.5" y="515" font-size="13" text-anchor="middle">Select</text>
+<path class="ln" d="M1186,510 H1205" marker-end="url(#a)"/>
+<g class="lc"><rect class="card" x="1208" y="490" width="125" height="40" rx="20" stroke="currentColor" stroke-width="1.6"/>
+</g>
+<text class="t" x="1270.5" y="515" font-size="13" text-anchor="middle">Promote</text>
+<path class="ln" d="M1333,510 H1352" marker-end="url(#a)"/>
+<g class="raw"><rect class="card" x="1355" y="490" width="125" height="40" rx="20" stroke="currentColor" stroke-width="1.6"/>
+<use href="#i-box" x="1365" y="501" width="18" height="18"/></g>
+<text class="t" x="1387" y="515" font-size="12.5" font-weight="600">Model bundle</text>
+<path class="ln" d="M260,222 H327" marker-end="url(#a)"/>
+<path class="ln" d="M260,322 H295 V236 H327" marker-end="url(#a)"/>
+<path class="ln" d="M430,254 V287" marker-end="url(#a)"/>
+<path class="ln" d="M530,222 H597" marker-end="url(#a)"/>
+<path class="ln" d="M700,254 V287" marker-end="url(#a)"/>
+<path class="ln" d="M800,322 H835 V242 H887" marker-end="url(#a)"/>
+<path class="ln" d="M835,322 V437" marker-end="url(#a)"/>
+<circle class="ah" cx="835" cy="322" r="3.5"/>
+<text class="m sb" x="828" y="414" text-anchor="end">features</text>
+<path class="ln" d="M1065,242 H1092" marker-end="url(#a)"/>
+<path class="ln" d="M1270,242 H1297" marker-end="url(#a)"/>
+<path class="ln" d="M1387,274 V297" marker-end="url(#a)"/>
+<path class="ln" d="M1417.5,490 V415 H1285 V292 H1182"/>
+<path class="ln" d="M1182,292 H977 V277" marker-end="url(#a)"/>
+<path class="ln" d="M1182,292 V277" marker-end="url(#a)"/>
+<text class="m sb" x="1080" y="310" text-anchor="middle">promoted bundle</text>
+</svg>
