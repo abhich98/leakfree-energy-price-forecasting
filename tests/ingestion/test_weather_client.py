@@ -225,11 +225,13 @@ class TestFetchForecastWeather:
         assert df.empty
 
     def test_adds_fetched_at_column(self, mock_fetch_single):
-        # raw.weather_forecast's unique key includes fetched_at, and the loader
-        # hard-requires the column — every non-empty forecast fetch must stamp it.
+        # Forecast payloads must include both fetched_at and issue_timestamp
+        # to satisfy raw.weather_forecast ingestion.
         df = fetch_forecast_weather(START, END)
         assert "fetched_at" in df.columns
         assert df["fetched_at"].notna().all()
+        assert "issue_timestamp" in df.columns
+        assert df["issue_timestamp"].notna().all()
 
     def test_fetched_at_is_utc_and_within_call_window(self, mock_fetch_single):
         before = datetime.now(timezone.utc)
@@ -237,3 +239,4 @@ class TestFetchForecastWeather:
         after = datetime.now(timezone.utc)
         assert (df["fetched_at"] >= before).all()
         assert (df["fetched_at"] <= after).all()
+        assert str(df["issue_timestamp"].dt.tz) == "UTC"
