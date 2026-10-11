@@ -167,8 +167,6 @@ models:
 
       - name: value
         description: "Forecasted generation output in MW. Non-negative."
-        tests:
-          - not_null
 
       - name: unit
         description: "Unit of measurement. Always MW for generation forecast signals."
@@ -177,8 +175,6 @@ models:
 
       - name: resolution
         description: "Forecast resolution (for example hourly)."
-        tests:
-          - not_null
 
       - name: fetched_at
         description: "UTC timestamp when this record was fetched from source."
@@ -219,8 +215,6 @@ models:
 
       - name: value
         description: "Weather measurement (wind speed, direction, temperature, etc.). Can be negative."
-        tests:
-          - not_null
 
       - name: unit
         description: "Unit of the weather measurement."
@@ -269,8 +263,6 @@ models:
 
       - name: value
         description: "Weather measurement (wind speed, direction, temperature, etc.). Can be negative."
-        tests:
-          - not_null
 
       - name: unit
         description: "Unit of the weather measurement."

@@ -5,7 +5,13 @@ import pandas as pd
 import pytest
 from moto import mock_aws
 
-from ingestion.s3_uploader import DATA_NAMES, get_file_name, upload_to_s3
+from ingestion.s3_uploader import (
+    DATA_NAMES,
+    create_bucket_if_not_exists,
+    enable_bucket_versioning,
+    get_file_name,
+    upload_to_s3,
+)
 
 BUCKET = "zephyrwerk-test-bucket"
 REGION = "eu-central-1"
@@ -72,4 +78,42 @@ def test_get_file_name():
     expected_key = get_expected_key(DATA_NAMES.WEATHER)
     file_name = get_file_name(DATA_NAMES.WEATHER, 2024, 1, 15)
     assert file_name == expected_key, f"Expected file name {expected_key!r}, got {file_name!r}"
+
+
+def test_enable_bucket_versioning(fake_s3):
+    enable_bucket_versioning(bucket_name=BUCKET)
+    versioning = fake_s3.get_bucket_versioning(Bucket=BUCKET)
+    assert versioning.get("Status") == "Enabled"
+
+
+def test_create_bucket_if_not_exists_enables_versioning(monkeypatch):
+    new_bucket = "new-test-bucket"
+    monkeypatch.setenv("ZEPHYRWERK_AWS_BUCKET_NAME", new_bucket)
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
+
+    with mock_aws():
+        client = boto3.client("s3", region_name=REGION)
+        create_bucket_if_not_exists(bucket_name=new_bucket)
+        versioning = client.get_bucket_versioning(Bucket=new_bucket)
+        assert versioning.get("Status") == "Enabled"
+
+
+def test_upload_to_s3_returns_version_id_when_versioning_enabled(fake_s3, sample_df):
+    enable_bucket_versioning(bucket_name=BUCKET)
+    version_id = upload_to_s3(sample_df, data_name=DATA_NAMES.SMARD)
+    assert version_id is not None
+
+    # Overwrite the same key with new data to verify multiple versions exist
+    version_id_2 = upload_to_s3(sample_df, data_name=DATA_NAMES.SMARD)
+    assert version_id_2 is not None
+    assert version_id != version_id_2
+
+    expected_key = get_expected_key(DATA_NAMES.SMARD)
+    versions_resp = fake_s3.list_object_versions(Bucket=BUCKET, Prefix=expected_key)
+    versions = versions_resp.get("Versions", [])
+    assert len(versions) == 2
+
 

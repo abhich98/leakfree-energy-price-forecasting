@@ -58,10 +58,12 @@ class TestGetDataframe:
 def _forecast_df() -> pd.DataFrame:
     return pd.DataFrame({
         "timestamp": pd.to_datetime(["2024-01-15T00:00:00Z"]),
+        "issue_timestamp": pd.to_datetime(["2024-01-14T00:00:00Z"]),
         "region": ["wind_region_brandenburg"],
         "signal_type": ["wind_speed_100m"],
         "value": [5.0],
         "unit": ["km/h"],
+        "model": [None],
         "fetched_at": pd.to_datetime(["2024-01-14T03:00:00Z"]),
     })
 
@@ -71,34 +73,34 @@ class TestLoadWeatherForecastDay:
         conn = MagicMock()
         with patch("ingestion.loader._get_dataframe", return_value=None):
             loader._load_weather_forecast_day(conn, MagicMock(), datetime(2024, 1, 15, tzinfo=timezone.utc))
-        conn.cursor.assert_not_called()
+        conn.execute.assert_not_called()
 
     def test_inserts_rows_including_fetched_at(self):
         conn = MagicMock()
-        with patch("ingestion.loader._get_dataframe", return_value=_forecast_df()), \
-             patch("ingestion.loader.execute_values") as mock_execute_values:
+        with patch("ingestion.loader._get_dataframe", return_value=_forecast_df()):
             loader._load_weather_forecast_day(conn, MagicMock(), datetime(2024, 1, 15, tzinfo=timezone.utc))
 
-        rows = mock_execute_values.call_args.args[2]
-        assert rows == [(
-            pd.Timestamp("2024-01-15T00:00:00Z"),
-            "wind_region_brandenburg",
-            "wind_speed_100m",
-            5.0,
-            "km/h",
-            pd.Timestamp("2024-01-14T03:00:00Z"),
-        )]
-        conn.commit.assert_called_once()
+        rows = conn.execute.call_args.args[1]
+        assert rows == [{
+            "timestamp": pd.Timestamp("2024-01-15T00:00:00Z"),
+            "issue_timestamp": pd.Timestamp("2024-01-14T00:00:00Z"),
+            "region": "wind_region_brandenburg",
+            "signal_type": "wind_speed_100m",
+            "value": 5.0,
+            "unit": "km/h",
+            "model": None,
+            "fetched_at": pd.Timestamp("2024-01-14T03:00:00Z"),
+        }]
+        conn.begin.assert_called_once()
 
     def test_insert_sql_targets_weather_forecast_table_with_fetched_at_conflict_key(self):
         conn = MagicMock()
-        with patch("ingestion.loader._get_dataframe", return_value=_forecast_df()), \
-             patch("ingestion.loader.execute_values") as mock_execute_values:
+        with patch("ingestion.loader._get_dataframe", return_value=_forecast_df()):
             loader._load_weather_forecast_day(conn, MagicMock(), datetime(2024, 1, 15, tzinfo=timezone.utc))
 
-        insert_sql = mock_execute_values.call_args.args[1]
+        insert_sql = str(conn.execute.call_args.args[0])
         assert "raw.weather_forecast" in insert_sql
-        assert "ON CONFLICT (timestamp, region, signal_type, fetched_at)" in insert_sql
+        assert "ON CONFLICT (timestamp, region, signal_type)" in insert_sql
 
     def test_raises_keyerror_if_fetched_at_column_missing(self):
         # Regression guard: fetch_forecast_weather must always stamp `fetched_at`
@@ -113,10 +115,9 @@ class TestLoadWeatherForecastDay:
     def test_rolls_back_and_does_not_raise_on_insert_failure(self):
         conn = MagicMock()
         with patch("ingestion.loader._get_dataframe", return_value=_forecast_df()), \
-             patch("ingestion.loader.execute_values", side_effect=RuntimeError("db down")):
+             patch.object(conn, "execute", side_effect=RuntimeError("db down")):
             loader._load_weather_forecast_day(conn, MagicMock(), datetime(2024, 1, 15, tzinfo=timezone.utc))
-        conn.rollback.assert_called_once()
-        conn.commit.assert_not_called()
+        conn.begin.return_value.__exit__.assert_called_once()
 
 
 # ── load_from_s3_to_db ───────────────────────────────────────────────────────

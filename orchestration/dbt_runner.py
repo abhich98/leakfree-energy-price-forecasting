@@ -1,7 +1,9 @@
 """Run dbt for a pipeline run and archive its generated artifacts."""
 
+import json
 import os
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -41,8 +43,10 @@ def _upload_artifact(s3: Any, bucket: str, source: Path, key: str) -> str:
     return f"s3://{bucket}/{key}"
 
 
-def run_dbt(run_id: UUID) -> dict[str, str]:
-    """Run and test dbt from committed sources, then archive its run artifacts."""
+def run_dbt(
+    run_id: UUID, feature_start: datetime, feature_end_exclusive: datetime
+) -> dict[str, str]:
+    """Run and test dbt for an ELT feature window, then archive its artifacts."""
     _require_clean_dbt_definition()
     bucket = os.environ.get("ZEPHYRWERK_AWS_BUCKET_NAME")
     if not bucket:
@@ -50,24 +54,30 @@ def run_dbt(run_id: UUID) -> dict[str, str]:
 
     target_path = Path("target") / "pipeline-runs" / str(run_id)
     artifact_dir = DBT_PROJECT_DIR / target_path
-    command_base = [
-        "dbt",
+    args = [
         "--project-dir",
         str(DBT_PROJECT_DIR),
         "--profiles-dir",
         str(DBT_PROJECT_DIR),
         "--target-path",
         str(target_path),
+        "--vars",
+        json.dumps(
+            {
+                "feature_start": feature_start.isoformat(),
+                "feature_end_exclusive": feature_end_exclusive.isoformat(),
+            }
+        ),
     ]
     s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
     prefix = f"artifacts/pipeline-runs/{run_id}/dbt"
 
-    subprocess.run([*command_base, "run"], cwd=PROJECT_ROOT, check=True)
+    subprocess.run(["dbt", "run", *args], cwd=PROJECT_ROOT, check=True)
     run_results_uri = _upload_artifact(
         s3, bucket, artifact_dir / "run_results.json", f"{prefix}/run_results_run.json"
     )
 
-    subprocess.run([*command_base, "test"], cwd=PROJECT_ROOT, check=True)
+    subprocess.run(["dbt", "test", *args], cwd=PROJECT_ROOT, check=True)
     test_results_uri = _upload_artifact(
         s3, bucket, artifact_dir / "run_results.json", f"{prefix}/run_results_test.json"
     )

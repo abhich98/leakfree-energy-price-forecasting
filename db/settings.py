@@ -30,7 +30,12 @@ class Settings(BaseSettings):
     ZEPHYRWERK_DASHBOARD_API_URL: str
 
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
         
     @property
     def database_url(self) -> str:

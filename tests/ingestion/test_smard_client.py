@@ -1,11 +1,13 @@
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 import requests
 
 from ingestion.smard_client import (
     ENERGY_SOURCE,
+    FORECAST_SIGNAL,
     MAX_TIME_OUT,
     REGION,
     RESOLUTION,
@@ -14,7 +16,14 @@ from ingestion.smard_client import (
     _get_index,
     _get_series,
     fetch_range,
+    resolution_for_date,
+    SMARD_QUARTER_HOUR_SWITCH_DATE,
 )
+
+
+@pytest.fixture(autouse=True)
+def clear_smard_index_cache():
+    _get_index.cache_clear()
 
 
 def _mock_response(json_data: dict, status_code: int = 200) -> MagicMock:
@@ -121,19 +130,25 @@ _SERIES_DATA = [
 @pytest.fixture
 def mock_index_and_series():
     with patch("ingestion.smard_client._get_index") as m_idx, \
-         patch("ingestion.smard_client._get_series") as m_ser:
+         patch("ingestion.smard_client._get_series") as m_ser, \
+         patch("ingestion.smard_client._get_series_payload_with_retry") as m_payload:
         m_idx.return_value = [_CHUNK_TS]
         m_ser.return_value = _SERIES_DATA
-        yield m_idx, m_ser
+        m_payload.return_value = {
+            "series": _SERIES_DATA,
+            "meta_data": {"created": _CHUNK_TS},
+        }
+        yield m_idx, m_ser, m_payload
 
 
 class TestFetchRange:
     def test_returns_expected_columns(self, mock_index_and_series):
         df = fetch_range(START, END)
-        assert list(df.columns) == ["timestamp", "value", "signal", "unit"]
+        expected_columns = {"timestamp", "value", "signal", "unit", "resolution", "issue_timestamp", "fetched_at"}
+        assert expected_columns.issubset(set(df.columns))
 
     def test_all_smard_signals_are_fetched(self, mock_index_and_series):
-        m_idx, _ = mock_index_and_series
+        m_idx, _, _ = mock_index_and_series
         fetch_range(START, END)
         assert m_idx.call_count == len(SMARD_SIGNALS)
 
@@ -174,9 +189,11 @@ class TestFetchRange:
             [end_ms, 300.0],           # at end — included
         ]
         with patch("ingestion.smard_client._get_index") as m_idx, \
-             patch("ingestion.smard_client._get_series") as m_ser:
+             patch("ingestion.smard_client._get_series") as m_ser, \
+             patch("ingestion.smard_client._get_series_payload_with_retry") as m_payload:
             m_idx.return_value = [before_start_ms]
             m_ser.return_value = series
+            m_payload.return_value = {"series": series, "meta_data": {"created": before_start_ms}}
             df = fetch_range(narrow_start, narrow_end)
 
         assert all(df["timestamp"] >= narrow_start)
@@ -184,8 +201,12 @@ class TestFetchRange:
         assert len(df) == 2 * len(SMARD_SIGNALS)
 
     def test_none_values_coerced_to_nan(self, mock_index_and_series):
-        _, m_ser = mock_index_and_series
+        _, m_ser, m_payload = mock_index_and_series
         m_ser.return_value = [[int(START.timestamp() * 1000), None]]
+        m_payload.return_value = {
+            "series": [[int(START.timestamp() * 1000), None]],
+            "meta_data": {"created": _CHUNK_TS},
+        }
         df = fetch_range(START, END)
         assert df["value"].isna().sum() == len(SMARD_SIGNALS)
 
@@ -200,9 +221,11 @@ class TestFetchRange:
             return [_CHUNK_TS]
 
         with patch("ingestion.smard_client._get_index") as m_idx, \
-             patch("ingestion.smard_client._get_series") as m_ser:
+             patch("ingestion.smard_client._get_series") as m_ser, \
+             patch("ingestion.smard_client._get_series_payload_with_retry") as m_payload:
             m_idx.side_effect = failing_first
             m_ser.return_value = _SERIES_DATA
+            m_payload.return_value = {"series": _SERIES_DATA, "meta_data": {"created": _CHUNK_TS}}
             df = fetch_range(START, END)
 
         assert len(df["signal"].unique()) == len(SMARD_SIGNALS) - 1
@@ -211,16 +234,18 @@ class TestFetchRange:
         with patch("ingestion.smard_client._get_index") as m_idx:
             m_idx.side_effect = ValueError("simulated failure")
             df = fetch_range(START, END)
-        assert list(df.columns) == ["timestamp", "value", "signal", "unit"]
+        assert list(df.columns) == ["timestamp", "value", "signal", "unit", "resolution"]
         assert len(df) == 0
 
     def test_returns_empty_dataframe_when_all_series_empty(self):
         with patch("ingestion.smard_client._get_index") as m_idx, \
-             patch("ingestion.smard_client._get_series") as m_ser:
+             patch("ingestion.smard_client._get_series") as m_ser, \
+             patch("ingestion.smard_client._get_series_payload_with_retry") as m_payload:
             m_idx.return_value = [_CHUNK_TS]
             m_ser.return_value = []
+            m_payload.return_value = {"series": [], "meta_data": {"created": _CHUNK_TS}}
             df = fetch_range(START, END)
-        assert list(df.columns) == ["timestamp", "value", "signal", "unit"]
+        assert list(df.columns) == ["timestamp", "value", "signal", "unit", "resolution"]
         assert len(df) == 0
 
     def test_multiple_chunks_per_signal_are_concatenated(self):
@@ -232,9 +257,67 @@ class TestFetchRange:
 
         wide_end = datetime(2024, 1, 29, 23, 0, tzinfo=timezone.utc)
         with patch("ingestion.smard_client._get_index") as m_idx, \
-             patch("ingestion.smard_client._get_series") as m_ser:
+             patch("ingestion.smard_client._get_series") as m_ser, \
+             patch("ingestion.smard_client._get_series_payload_with_retry") as m_payload:
             m_idx.return_value = [chunk1, chunk2]
             m_ser.side_effect = [series_chunk1, series_chunk2] * len(SMARD_SIGNALS)
+            m_payload.side_effect = [
+                {"series": series_chunk1, "meta_data": {"created": chunk1}},
+                {"series": series_chunk2, "meta_data": {"created": chunk2}},
+            ] * len(SMARD_SIGNALS)
             df = fetch_range(START, wide_end)
 
         assert len(df) == 2 * len(SMARD_SIGNALS)
+
+    def test_forecast_issue_timestamp_rule(self):
+        start = datetime(2024, 1, 15, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2024, 1, 15, 23, 0, tzinfo=timezone.utc)
+        start_ms = int(start.timestamp() * 1000)
+
+        with patch("ingestion.smard_client._get_index") as m_idx, \
+             patch("ingestion.smard_client._get_series_payload_with_retry") as m_payload:
+            m_idx.return_value = [start_ms]
+            m_payload.return_value = {
+                "series": [[start_ms, 100.0]],
+                "meta_data": {"created": start_ms},
+            }
+
+            df_load = fetch_range(start, end)
+
+        total_load_row = df_load[df_load["signal"] == FORECAST_SIGNAL.TOTAL_CONSUMPTION_FC.name].iloc[0]
+        total_generation_row = df_load[df_load["signal"] == FORECAST_SIGNAL.TOTAL_GENERATION_FC.name].iloc[0]
+
+        assert total_load_row["issue_timestamp"] == pd.Timestamp("2024-01-14T10:00:00Z")
+        assert total_generation_row["issue_timestamp"] == pd.Timestamp("2024-01-14T18:00:00Z")
+
+
+# ── resolution_for_date ───────────────────────────────────────────────────────
+
+class TestResolutionForDate:
+    def test_returns_hour_before_switch_date(self):
+        date = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        assert resolution_for_date(date) == RESOLUTION.HOUR
+
+    def test_returns_quarter_hour_on_switch_date(self):
+        date = SMARD_QUARTER_HOUR_SWITCH_DATE
+        assert resolution_for_date(date) == RESOLUTION.QUARTER_HOUR
+
+    def test_returns_quarter_hour_after_switch_date(self):
+        date = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        assert resolution_for_date(date) == RESOLUTION.QUARTER_HOUR
+
+    def test_handles_naive_datetime(self):
+        date = datetime(2026, 1, 1)  # no tzinfo
+        assert resolution_for_date(date) == RESOLUTION.QUARTER_HOUR
+
+    def test_fetch_range_uses_hour_resolution_for_old_dates(self, mock_index_and_series):
+        old_start = datetime(2024, 1, 15, tzinfo=timezone.utc)
+        old_end = datetime(2024, 1, 21, tzinfo=timezone.utc)
+        df = fetch_range(old_start, old_end)
+        assert (df["resolution"] == "hour").all()
+
+    def test_fetch_range_uses_quarter_hour_resolution_for_new_dates(self, mock_index_and_series):
+        new_start = datetime(2026, 1, 15, tzinfo=timezone.utc)
+        new_end = datetime(2026, 1, 21, tzinfo=timezone.utc)
+        df = fetch_range(new_start, new_end)
+        assert (df["resolution"] == "quarter-hour").all()

@@ -19,7 +19,7 @@ from ml.data_versioning import (
 from ml.features.feature_engineering import (
     BASELINE_PRED_COLUMNS,
     TARGET_COLUMNS,
-    drop_incomplete_days,
+    drop_incomplete_rows,
     split_x_y,
     temporal_split,
 )
@@ -171,10 +171,10 @@ def tune_two_stage_price_models(
     )
 
     # Preprocess the raw data by filling short gaps and dropping incomplete days
-    hourly_df = drop_incomplete_days(
+    hourly_df = drop_incomplete_rows(
         fill_short_feature_gaps(hourly_raw, omit_columns=[TARGET_COLUMNS[ModelType.PRICE_HOURLY]])
     )
-    qh_df = drop_incomplete_days(
+    qh_df = drop_incomplete_rows(
         fill_short_feature_gaps(qh_raw, omit_columns=[TARGET_COLUMNS[ModelType.PRICE_QUARTER_HOURLY]])
     )
 

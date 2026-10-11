@@ -31,6 +31,35 @@ The same article reports price-forecast MAE values:
 
 These numbers provide a practical business reason for this project: reducing forecasting error can materially increase realized value from the same physical energy asset.
 
+## Current implementation
+
+The repository implements the data, ELT, and forecasting workflow locally, with AWS used for the raw data lake and development database foundation.
+
+![System architecture](docs/architecture.svg)
+
+### Data sources and ingestion
+
+- **SMARD:** configurable historical backfills and incremental daily ingestion collect German electricity-market data, including generation, consumption, and day-ahead prices at hourly and quarter-hourly resolution.
+- **Open-Meteo:** historical weather observations and leak-safe weather forecasts supply wind, solar, cloud, and temperature signals for model features.
+- **Partitioned raw storage:** each source is written to S3 as Parquet partitions by calendar day; existing partitions can be skipped for incremental processing or deliberately overwritten when source data is revised.
+- **Raw-data lineage:** every upload updates an immutable inventory of S3 object versions so downstream runs can be traced back to their exact inputs.
+
+### ELT and data quality
+
+- **Orchestration:** the ELT runner coordinates ingestion, raw-inventory recording, PostgreSQL loading, and dbt transformations for a requested date range.
+- **PostgreSQL and dbt:** raw source records are loaded into PostgreSQL, then dbt produces cleaned analytical tables and model-ready feature data.
+- **Auditing and recovery:** pipeline and stage status, configuration hashes, row counts, and error details are recorded. Failed work can resume from its recorded execution state rather than repeating completed stages.
+
+### Forecasting and model lifecycle
+
+- **Two-stage price forecasting:** separate hourly and quarter-hourly models generate next-day electricity-price forecasts. Predictions are checked for missing values, duplicates, invalid timestamps, and quantile crossings before they are persisted.
+- **Traceable outputs:** persisted forecasts retain links to the source ELT run and model bundle used to generate them.
+- **Experimentation:** the codebase includes training, hyperparameter tuning, rolling and expanding-window evaluation, reporting, candidate selection, and production-model promotion utilities.
+
+### AWS foundation
+
+Terraform has already provisioned a development S3 data/artifact bucket and private PostgreSQL RDS environment in `eu-north-1`. It is a foundation only: workloads are not yet scheduled or deployed as cloud compute services.
+
 ## Project lineage
 
 The original end-to-end data [platform](https://github.com/hasanerdin/zephyrwerk-platform/tree/main) and ML workflow was developed by **Hasan Erdin**. I adapted and extended this repository for focused **time-series forecasting and experimentation**, including rolling/expanding-window evaluation and comparative benchmarking.
@@ -51,13 +80,21 @@ The table below summarizes the key forecasting results from the reports in `ml/a
 <!-- | Price hourly (single-window holdout) | **16.178** | 26.863 | 2023-05-01 00:00 to 2025-12-31 23:00 | 2026-01-01 00:00 to 2026-03-31 23:00 | **-1.022** (better) | **-5.222** (better) |
  -->
 
-## Interpretation
+### Interpretation
 
 - The repository’s **hourly models** (both single-window and Stage 1 in 2-stage backtest) outperform the article’s published 17.2 EUR/MWh reference MAE.
 - The **quarter-hour Stage 2 model** is slightly above 17.2 EUR/MWh, but still materially better than the article’s 21.4 EUR/MWh Re-Twin MAE and much better than previous-day baseline levels.
 
-## Notes on comparability
+### Notes on comparability
 
 - External and internal studies are not perfectly identical (data contract details, data omission, model classes, and holdout slicing most possibly differ).
 - The article benchmark report stored in this repo explicitly preserves published MAE values and notes that additional metrics (RMSE, R², directional accuracy) were not provided in the source article.
 - **Use MAE comparisons as directional performance context rather than strict like-for-like head-to-head claims.**
+
+## TODO: Move the workflow to AWS with Terraform
+
+The next step is to make the existing workflow portable and scheduled without changing its data contracts or lineage.
+
+1. Move Terraform state to a dedicated private remote backend with locking.
+2. Use Terraform to add least-privilege IAM, ECR repositories, ECS Fargate tasks, CloudWatch logging, and private database access for the existing ELT and forecast containers.
+3. Schedule the workflow with EventBridge and Step Functions, then add CI/CD to validate Terraform and deploy approved container images.

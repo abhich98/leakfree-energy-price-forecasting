@@ -1,6 +1,41 @@
+WITH requested_window AS (
+    SELECT
+        '{{ var("feature_start") }}'::timestamptz AS start_timestamp,
+        '{{ var("feature_end_exclusive") }}'::timestamptz AS end_timestamp
+),
+requested_timestamp_spine AS (
+    SELECT
+        generate_series(
+            start_timestamp,
+            end_timestamp - INTERVAL '1 hour',
+            INTERVAL '1 hour'
+        ) AS timestamp,
+        'hour'::text AS resolution
+    FROM requested_window
+
+    UNION ALL
+
+    SELECT
+        generate_series(
+            start_timestamp,
+            end_timestamp - INTERVAL '15 minutes',
+            INTERVAL '15 minutes'
+        ) AS timestamp,
+        'quarterhour'::text AS resolution
+    FROM requested_window
+),
+timestamp_spine AS (
+    SELECT timestamp, resolution
+    FROM {{ ref('fct_market_prices') }}
+
+    UNION
+
+    SELECT timestamp, resolution
+    FROM requested_timestamp_spine
+)
 SELECT
-    mp.timestamp,
-    mp.resolution,
+    spine.timestamp,
+    spine.resolution,
 
     -- Energy generation features
     g.wind_onshore_mw,
@@ -108,26 +143,28 @@ SELECT
     d.holiday_name,
     d.is_workday
 
-FROM 
-    {{ ref('fct_market_prices') }} AS mp
-        LEFT JOIN
+FROM timestamp_spine AS spine
+    LEFT JOIN {{ ref('fct_market_prices') }} AS mp
+        ON spine.timestamp = mp.timestamp
+        AND spine.resolution = mp.resolution
+    LEFT JOIN
     {{ ref('fct_energy_generation_load') }} AS g
-        ON mp.timestamp = g.timestamp
-        AND mp.resolution = g.resolution
-        LEFT JOIN
+        ON spine.timestamp = g.timestamp
+        AND spine.resolution = g.resolution
+    LEFT JOIN
     {{ ref('fct_energy_generation_load_forecast') }} AS gf
-        ON mp.timestamp = gf.timestamp
-        AND mp.resolution = gf.resolution
-        LEFT JOIN
+        ON spine.timestamp = gf.timestamp
+        AND spine.resolution = gf.resolution
+    LEFT JOIN
     {{ ref('fct_price_spreads') }} AS ps
-        ON mp.timestamp = ps.timestamp
-        AND mp.resolution = ps.resolution
-        LEFT JOIN
+        ON spine.timestamp = ps.timestamp
+        AND spine.resolution = ps.resolution
+    LEFT JOIN
     {{ ref('fct_weather') }} AS w
-        ON mp.timestamp = w.timestamp
-        LEFT JOIN
+        ON spine.timestamp = w.timestamp
+    LEFT JOIN
     {{ ref('fct_weather_forecast') }} AS wf
-        ON mp.timestamp = wf.timestamp
-        LEFT JOIN
+        ON spine.timestamp = wf.timestamp
+    LEFT JOIN
     {{ ref('dim_date') }} AS d
-        ON mp.timestamp :: date = d.date_day
+        ON spine.timestamp::date = d.date_day

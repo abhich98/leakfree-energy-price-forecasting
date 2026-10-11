@@ -392,7 +392,7 @@ models:
         description: "Forecasted air temperature at 2 m above ground in °C for solar_region_bawue."
 
   - name: fct_ml_features
-    description: "Forecast-safe wide feature table for ML training and inference. Joins generation, generation forecast, market prices, price spreads, and weather forecast features. One row per timestamp and resolution."
+    description: "Wide feature table for ML training and inference. It retains historical market-price timestamps and adds the current ELT window as an hourly and quarter-hourly spine, so future rows have nullable same-time market prices."
     tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -456,14 +456,10 @@ models:
                       Sourced from fct_energy_generation_load."
 
       - name: price_eur_mwh
-        description: "DE_LU day-ahead spot price in EUR/MWh. Sourced from fct_market_prices."
-        tests:
-          - not_null
+        description: "DE_LU day-ahead spot price in EUR/MWh. Null for future inference timestamps before the day-ahead price is known."
 
       - name: de_lu_price_eur_mwh
-        description: "DE_LU day-ahead spot price in EUR/MWh. Sourced from fct_price_spreads."
-        tests:
-          - not_null
+        description: "DE_LU day-ahead spot price in EUR/MWh from the price-spread source. Null for future inference timestamps."
 
       - name: austria_price_eur_mwh
         description: "Austria day-ahead spot price in EUR/MWh. Sourced from fct_price_spreads."
@@ -660,6 +656,4 @@ models:
           - not_null
 
       - name: price_eur_mwh
-        description: "Target DE/LU day-ahead price in EUR/MWh."
-        tests:
-          - not_null
+        description: "Target DE/LU day-ahead price in EUR/MWh. Null for future inference timestamps."

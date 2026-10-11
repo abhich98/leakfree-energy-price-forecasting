@@ -22,10 +22,6 @@ def fake_s3(monkeypatch):
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
     monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
 
-    # the module caches its boto3 client at first use; reset it so each test
-    # picks up a client bound to the currently active moto backend
-    s3_model_io._reset_client_cache()
-
     with mock_aws():
         client = boto3.client("s3", region_name=REGION)
         client.create_bucket(
@@ -33,8 +29,6 @@ def fake_s3(monkeypatch):
             CreateBucketConfiguration={"LocationConstraint": REGION},
         )
         yield client
-
-    s3_model_io._reset_client_cache()
 
 
 @pytest.fixture

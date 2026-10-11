@@ -27,6 +27,7 @@ def capture_read_sql(monkeypatch):
         calls.append({"query": str(query), "params": params})
         return pd.DataFrame({
             "timestamp": pd.to_datetime(["2024-01-02", "2024-01-01"]),
+            "local_timestamp": pd.to_datetime(["2024-01-02", "2024-01-01"]),
             "value": [2.0, 1.0],
             "wind_onshore_mw": [30.0, 20.0],
             "wind_offshore_mw": [8.0, 5.0],
@@ -132,3 +133,15 @@ def test_load_features_logs_and_reraises_on_failure(fake_engine, monkeypatch, ca
             data_access.load_ml_features()
 
     assert "Failed to load features" in caplog.text
+
+
+def test_load_hourly_price_model_features_uses_hourly_contract(fake_engine, capture_read_sql):
+    df = data_access.load_hourly_price_model_features(start_date="2024-01-01")
+
+    call = capture_read_sql[0]
+    assert "analytics.fct_ml_hourly_price_model_features" in call["query"]
+    assert "AND local_timestamp >= :start_date" in call["query"]
+    assert "ORDER BY local_timestamp ASC" in call["query"]
+    assert call["params"] == {"start_date": "2024-01-01"}
+    assert df.index.name == "local_timestamp"
+    assert df.index.is_monotonic_increasing

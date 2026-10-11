@@ -90,6 +90,31 @@ def get_pipeline_run(run_id: UUID) -> dict[str, Any]:
     return dict(row)
 
 
+def get_latest_elt_run(require_success: bool = True) -> dict[str, Any]:
+    """Return the newest ELT run, optionally requiring that it succeeded."""
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(
+                """
+                SELECT run_id, status, requested_start, requested_end, raw_inventory_uri
+                FROM operations.pipeline_runs
+                WHERE pipeline_name = 'elt'
+                ORDER BY started_at DESC
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+    if row is None:
+        raise ValueError("No ELT run exists.")
+    elt_run = dict(row)
+    if require_success and elt_run["status"] != "succeeded":
+        raise ValueError(
+            f"Latest ELT run {elt_run['run_id']} has status {elt_run['status']}; "
+            "live features cannot be consumed."
+        )
+    return elt_run
+
+
 def get_latest_stage_status(run_id: UUID, stage_name: str) -> str | None:
     """Return the latest recorded status for a stage in a pipeline run."""
     with engine.connect() as connection:

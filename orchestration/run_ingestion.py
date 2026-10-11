@@ -15,11 +15,11 @@ Incremental: fetches yesterday's data only.
 
 import argparse
 import logging
-import sys
 import os
-from pathlib import Path
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -32,7 +32,6 @@ from ingestion.raw_data_inventory import update_raw_data_inventory
 from ingestion.s3_uploader import DATA_NAMES, create_bucket_if_not_exists, is_already_uploaded, upload_to_s3
 from ingestion.smard_client import RESOLUTION, SMARD_QUARTER_HOUR_SWITCH_DATE, fetch_range
 from ingestion.weather_client import fetch_forecast_weather_2, fetch_historical_weather
-from utils.config_hash import config_hash
 from orchestration.dbt_runner import run_dbt
 from orchestration.run_audit import (
     finish_pipeline_run,
@@ -44,6 +43,7 @@ from orchestration.run_audit import (
     start_pipeline_run,
     start_stage_run,
 )
+from utils.config_hash import config_hash
 
 load_dotenv()  # Load environment variables from .env file
 
@@ -115,7 +115,7 @@ def _fetch_weather_chunked(start_date: datetime, end_date: datetime) -> pd.DataF
             datetime(chunk_start.year, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
             end_date_local,
         )
-        logger.info(f"Fetching weather for {chunk_start.date()} → {chunk_end.date()}")
+        logger.info(f"Fetching weather for chunk {chunk_start.isoformat()} → {chunk_end.isoformat()}")
         df = fetch_historical_weather(chunk_start, chunk_end)
         if not df.empty:
             frames.append(df)
@@ -252,7 +252,16 @@ ELT_STAGES = (
             "requested_end": context["requested_end"].isoformat(),
         },
     ),
-    EltStage("run_dbt", ("load_postgres",), lambda run_id, _: run_dbt(run_id), lambda result, _: result),
+    EltStage(
+        "run_dbt",
+        ("load_postgres",),
+        lambda run_id, context: run_dbt(
+            run_id,
+            context["requested_start"],
+            context["requested_end"] + timedelta(seconds=1),
+        ),
+        lambda result, _: result,
+    ),
 )
 
 
